@@ -129,7 +129,7 @@ class Slice( Linear ):
   def __mul__( self, other ):
     assert self.fromdim == other.todim
     return Slice( other.fromdim, *self.nestslices(self.slice,other.slice) ) if isinstance( other, Slice ) \
-      else Scale( other.factors[self.slice] ) if isinstance( other, Scale ) \
+      else Scale( other.factors[self.slice] ) if isinstance( other, Scale ) and self.fromdim == self.todim \
       else Linear( other.matrix[self.slice] ) if isinstance( other, Linear ) \
       else Linear.__mul__( self, other )
 
@@ -189,12 +189,11 @@ class Scale( Linear ):
     return '[%s] x' % ','.join( '%.2f' % v for v in self.factors )
 
 
-class Identity( Scale ):
+class Identity( Transformation ):
   __slots__ = ()
 
   def __init__( self, ndims, sign=1 ):
-    factors = numeric.ones( ndims )
-    Scale.__init__( self, factors, sign )
+    Transformation.__init__( self, ndims, ndims, sign )
 
   def apply( self, points, axis=-1 ):
     return points
