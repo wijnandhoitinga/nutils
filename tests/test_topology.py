@@ -309,6 +309,7 @@ def visualinspect():
   # visual.test_2DNodeRelabelingCorrect()
   visual.StokesBEM( visual=True )
 
-util.run( visualinspect )
+if __name__ == '__main__':
+  util.run( visualinspect )
 
 # vim:shiftwidth=2:foldmethod=indent:foldnestmax=2
