@@ -162,7 +162,7 @@ class Scale( Linear ):
     Linear.__init__( self, matrix, sign )
 
   def apply( self, points, axis=-1 ):
-    assert points.shape[axis] == self.fromdim
+    assert points.shape[axis] == self.fromdim, 'wrong point shape: got %d, expected %d' % ( points.shape[axis], self.fromdim )
     assert axis == -1
     return points * self.factors
 
