@@ -53,7 +53,7 @@ class CompiledEvaluable( object ):
       ischeme = ischeme[elem]
 
     if isinstance( ischeme, str ):
-      points, weights = elem.eval( ischeme )
+      points, weights = elem.eval( ischeme, self.cache )
     elif isinstance( ischeme, tuple ):
       points, weights = ischeme
       assert points.shape[-1] == elem.ndims

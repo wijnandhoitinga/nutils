@@ -41,11 +41,11 @@ class Element( object ):
     ncommon = len( set(self.vertices) & set(other.vertices) )
     return self.neighbormap[ ncommon ]
 
-  def eval( self, where ):
+  def eval( self, where, cache=lambda f, *args: f(*args) ):
     'get points'
 
     if isinstance( where, str ):
-      points, weights = self.getischeme( self.ndims, where )
+      points, weights = cache( self.getischeme, self.ndims, where )
     else:
       points = where
       weights = None
@@ -342,7 +342,7 @@ class ProductElement( Element ):
     transfpoints[:,2:] = flipxy( points[:,2:], transf2 )
     return numeric.asarray( transfpoints ), numeric.asarray( weights )
     
-  def eval( self, where ):
+  def eval( self, where, cache=lambda f, *args: f(*args) ):
     'get integration scheme'
     
     if where.startswith( 'singular' ):
@@ -350,17 +350,17 @@ class ProductElement( Element ):
       assert self.elem1.ndims == 2 and self.elem2.ndims == 2, 'singular quadrature only for bivariate surfaces'
       gauss = 'gauss%d'% (int(where[8:])*2-2)
       if isinstance( self.elem1, QuadElement ):
-        xw = ProductElement.singular_ischeme_quad( self.orientation, gauss )
+        xw = cache( self.singular_ischeme_quad, self.orientation, gauss )
       elif isinstance( self.elem1, TriangularElement ):
         if self.elem1 == self.elem2:
-          xw = self.get_tri_bem_ischeme( gauss, neighborhood=0 )
+          xw = cache( self.get_tri_bem_ischeme, gauss, neighborhood=0 )
         else:
-          xw = self.concat( self.elem1.eval(gauss), self.elem2.eval(gauss) )
+          xw = self.concat( self.elem1.eval(gauss,cache), self.elem2.eval(gauss,cache) )
       else:
         raise Exception, 'invalid element type %r' % type(self.elem1)
     else:
       where1, where2 = where.split( '*' ) if '*' in where else ( where, where )
-      xw = self.concat( self.elem1.eval(where1), self.elem2.eval(where2) )
+      xw = self.concat( self.elem1.eval(where1,cache), self.elem2.eval(where2,cache) )
     return xw
 
 class TrimmedElement( Element ):
@@ -381,14 +381,14 @@ class TrimmedElement( Element ):
 
     Element.__init__( self, ndims=elem.ndims, vertices=vertices, parent=parent )
 
-  def eval( self, ischeme ):
+  def eval( self, ischeme, cache=lambda f, *args: f(*args) ):
     'get integration scheme'
 
     assert isinstance( ischeme, str )
 
     if ischeme[:7] == 'contour':
       n = int(ischeme[7:] or 0)
-      points, weights = self.elem.eval( 'contour{}'.format(n) )
+      points, weights = self.elem.eval( 'contour{}'.format(n), cache )
       inside = numeric.greater_equal( self.levelset.eval( self.elem, points ), 0 )
       points = points[inside]
       return points, None
@@ -401,7 +401,7 @@ class TrimmedElement( Element ):
 
         for simplex in self.get_simplices( 0 ):
 
-          spoints, sweights = simplex.eval( ischeme )
+          spoints, sweights = simplex.eval( ischeme, cache )
           pelem, trans = simplex.parent
 
           assert pelem is self 
@@ -421,12 +421,12 @@ class TrimmedElement( Element ):
       else:
         
         if self.finestscheme.endswith( '.all' ):
-          points, weights = self.elem.eval( self.finestscheme[:-4] )
+          points, weights = self.elem.eval( self.finestscheme[:-4], cache )
         elif self.finestscheme.endswith( '.none' ):
-          points, weights = self.elem.eval( self.finestscheme[:-5] )
+          points, weights = self.elem.eval( self.finestscheme[:-5], cache )
           inside = numeric.zeros_like(weights,dtype=bool) # what is .none supposed to do? -GJ
         else:  
-          points, weights = self.elem.eval( self.finestscheme )
+          points, weights = self.elem.eval( self.finestscheme, cache )
           inside = numeric.greater( self.levelset.eval( self.elem, points ), 0 )
         points = points[inside]
         if weights is not None:
@@ -438,7 +438,7 @@ class TrimmedElement( Element ):
     for child in self.children:
       if child is None:
         continue
-      points, weights = child.eval( ischeme )
+      points, weights = child.eval( ischeme, cache )
       pelem, trans = child.parent
       assert pelem == self
       allcoords.append( trans.apply(points) )
