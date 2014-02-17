@@ -14,6 +14,8 @@ class NumericArray( numpy.ndarray ):
   __slots__ = ()
   def __new__( cls, arr ):
     return numpy.asarray( arr ).view( cls )
+  def __nonzero__( self ):
+    return bool( self[()] if not self.ndim else self.size )
   # rich comparisons
   def __eq__( self, other ): return self.__cmp__( other ) == 0
   def __gt__( self, other ): return self.__cmp__( other ) >  0
