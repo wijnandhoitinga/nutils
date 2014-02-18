@@ -3,7 +3,7 @@
 from nutils import *
 
 
-@parallel.fork
+#@parallel.fork
 def makeplots( domain, geom, velo, pres, index ):
 
   log.context( 'figures' )
@@ -69,7 +69,7 @@ def main( nelems=16, reynolds=2e3, bump=Gauss(.75,.25,.25), strong=False, tol=1e
 
   if bump:
     x, y = geom
-    geom = domain.projection( [ x, bump(x) * (1-y) + y ],
+    geom = domain.projection( [ (1-bump(y)) * x, y ],
                 onto=domain.splinefunc( degree=2 ).vector( 2 ), geometry=geom, ischeme='gauss9' )
     # piola
     J = function.localgradient( geom, domain.ndims )
