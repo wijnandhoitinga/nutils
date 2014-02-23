@@ -101,6 +101,12 @@ def norm2( A, axis=-1 ):
 
   return sqrt( contract( A, A, axis ) )
 
+def containssorted( array, item ):
+  _item = empty( (), dtype=array.dtype )
+  _item[()] = item
+  index = searchsorted( array, _item )
+  return index < len(array) and array[index] == item
+
 def findsorted( array, items ):
   indices = searchsorted( array, items )
   assert numpy.less( indices, array.size ).all()
