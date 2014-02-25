@@ -123,6 +123,23 @@ def objmap( func, *arrays ):
   arrays = [ asarray( array, dtype=object ) for array in arrays ]
   return numpy.frompyfunc( func, len(arrays), 1 )( *arrays )
 
+def insert( arr, axis ):
+  if axis < 0:
+    axis += arr.ndim + 1
+  assert 0 <= axis < arr.ndim + 1
+  return arr[ (slice(None),)*axis+(newaxis,) ]
+
+def kronecker( arr, axis, length, index ):
+  if length == 0:
+    assert index == 0
+    return insert( arr, index )
+  if axis < 0:
+    axis += arr.ndim + 1
+  assert 0 <= axis < arr.ndim + 1
+  assert 0 <= index < length
+  expanded = zeros( arr.shape[:axis] + (length,) + arr.shape[axis:] )
+  expanded[(slice(None),)*axis+(index,)] = arr
+  return expanded
 
 #####
 
