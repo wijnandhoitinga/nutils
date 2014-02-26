@@ -89,9 +89,9 @@ def det( A ):
     det[I] = numpy.linalg.det( A[I] )
   return det
 
-def getitem( A, axis, indices ):
-  indices = (slice(None),) * axis + (indices,) if axis >= 0 \
-       else (Ellipsis,indices) + (slice(None),) * (-axis-1)
+def getitem( A, axis, item ):
+  indices = (slice(None),) * axis + (item,) if axis >= 0 \
+       else (Ellipsis,item) + (slice(None),) * (-axis-1)
   return asarray( A )[ indices ]
 
 def norm2( A, axis=-1 ):
