@@ -211,6 +211,10 @@ class Identity( Transformation ):
     return self.sign
 
   @property
+  def matrix( self ):
+    return numeric.eye( self.fromdim )
+
+  @property
   def inv( self ):
     return self
 
