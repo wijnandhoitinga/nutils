@@ -1,0 +1,3 @@
+[submodule "nutils/numeric"]
+	path = nutils/numeric
+	url = https://github.com/nutils/numeric.git
