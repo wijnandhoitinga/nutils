@@ -20,11 +20,3 @@ are:
 
 The nutils are under active development, and are presently in use for
 academic research by Phd and MSc students.
-
-
-Development notes
------------------
-
-To update numeric:
-
-    git subtree pull --prefix=nutils/numeric https://github.com/nutils/numeric.git master
