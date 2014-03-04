@@ -811,8 +811,7 @@ class QuadElement( Element ):
 
     x = w = None
     if ndims == 0:
-      coords = numeric.zeros([1,0])
-      weights = numeric.array([1.])
+      return numeric.zeros([1,0]), numeric.array([1.])
     elif where.startswith( 'gauss' ):
       N = eval( where[5:] )
       if isinstance( N, tuple ):
