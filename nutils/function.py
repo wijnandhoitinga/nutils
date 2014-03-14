@@ -295,6 +295,27 @@ class Cascade( Evaluable ):
   def inv( self ):
     return Cascade( self.ndims, 1-self.side )
 
+class FindElem( Evaluable ):
+
+  def __init__( self, sorted_elems ):
+    Evaluable.__init__( self, args=[sorted_elems,ELEM], evalf=self.findelem )
+
+  @staticmethod
+  def findelem( sorted_elems, elem ):
+    index = numeric.bisect( sorted_elems, elem )
+    found = sorted_elems[index]
+    assert elem[:len(found)] == found
+    return index
+
+class GetItem( Evaluable ):
+
+  def __init__( self, values, index ):
+    Evaluable.__init__( self, args=[values,index], evalf=self.getitem )
+
+  @staticmethod
+  def getitem( values, index ):
+    return values[index]
+
 # ARRAYFUNC
 #
 # The main evaluable. Closely mimics a numpy array.
@@ -492,6 +513,29 @@ class ArrayFunc( Evaluable ):
     return '%s<%s>' % ( self.__class__.__name__, ','.join(map(str,self.shape)) )
 
   __repr__ = __str__
+
+class GetItemArray( ArrayFunc ):
+
+  def __init__( self, values, index, shape ):
+    ArrayFunc.__init__( self, args=[values,index], evalf=self.getitem, shape=shape )
+
+  @staticmethod
+  def getitem( values, index ):
+    return values[index]
+
+class PointsFor( ArrayFunc ):
+
+  def __init__( self, elem ):
+    Evaluable.__init__( self, args=[CACHE,ELEM,POINTS,elem], evalf=self.points )
+
+  @staticmethod
+  def points( cache, elem, points, myelem ):
+    assert elem[:len(myelem)] == myelem
+    alltrans = elem[len(myelem):]
+    if not alltrans:
+      return points
+    trans = util.product( alltrans )
+    return cache( trans.apply, points )
 
 class ElemArea( ArrayFunc ):
   'element area'
@@ -733,44 +777,33 @@ class Transform( ArrayFunc ):
   def _opposite( self ):
     return Transform( self.fromcascade, self.tocascade, 1-self.side )
 
-class SearchSorted( Evaluable ):
-
-  def __init__( self, sorted_array ):
-    Evaluable.__init__( args=[sorted_array,ELEM], evalf=numeric.searchsorted )
-
 class Function( ArrayFunc ):
   'function'
 
-  __slots__ = 'cascade', 'stdmap', 'igrad'
+  __slots__ = 'elem', 'std', 'ndims', 'igrad'
 
-  def __init__( self, cascade, stdmap, igrad, axis ):
+  def __init__( self, elem, std, ndims, igrad, axis ):
     'constructor'
 
-    self.cascade = cascade
-    self.stdmap = stdmap
+    self.elem = elem
+    self.std = std
     self.igrad = igrad
-    ArrayFunc.__init__( self, args=(CACHE,POINTS,cascade,stdmap,igrad), evalf=self.function, shape=(axis,)+(cascade.ndims,)*igrad )
+    self.ndims = ndims
+    points = PointsFor( elem )
+    ArrayFunc.__init__( self, args=(CACHE,points,elem,std,igrad), evalf=self.function, shape=(axis,)+(ndims,)*igrad )
 
   @staticmethod
-  def function( cache, points, cascade, stdmap, igrad ):
+  def function( cache, points, elem, std, igrad ):
     'evaluate'
 
-    fvals = []
-    for elem, trans in cascade:
-      std = stdmap.get(elem)
-      if std:
-        break
-    else:
-      raise Exception, 'no function values encountered'
-
     if not isinstance( std, tuple ):
-      elempoints = cache( trans.apply, points )
-      F = cache( std.eval, elempoints, igrad )
+      F = cache( std.eval, points, igrad )
       invmat = util.product( elem[1:] ).inv.matrix
       for axis in range(-igrad,0):
         F = numeric.dot( F, invmat, axis )
       return F
 
+    raise NotImplementedError
     fvals = []
     for std in std:
       if std:
@@ -790,13 +823,16 @@ class Function( ArrayFunc ):
     return fvals[0] if len(fvals) == 1 else numeric.concatenate( fvals, axis=-1-igrad )
 
   def _opposite( self ):
-    return Function( self.cascade.inv, self.stdmap, self.igrad, self.shape[0] )
+    return Function( self.elem, self.std, self.ndims, self.igrad, self.shape[0] )
 
   def _localgradient( self, ndims ):
-    assert ndims <= self.cascade.ndims
-    grad = Function( self.cascade, self.stdmap, self.igrad+1, self.shape[0] )
-    return grad if ndims == self.cascade.ndims \
-      else dot( grad[...,_], self.cascade.transform( ndims ), axes=-2 )
+    assert ndims <= self.ndims
+    grad = Function( self.elem, self.std, self.ndims, self.igrad+1, self.shape[0] )
+    if ndims == self.ndims:
+      return grad
+    else:
+      raise NotImplementedError
+      return dot( grad[...,_], self.cascade.transform( ndims ), axes=-2 )
 
 class Choose( ArrayFunc ):
   'piecewise function'
@@ -876,14 +912,14 @@ class Inverse( ArrayFunc ):
 class DofMap( ArrayFunc ):
   'dof axis'
 
-  __slots__ = 'cascade', 'dofmap'
+  __slots__ = 'dofmap',
 
-  def __init__( self, cascade, dofmap, axis ):
+  def __init__( self, dofmap, axis ):
     'new'
 
-    self.cascade = cascade
-    assert all( type(val) != numeric.ndarray for val in dofmap.values() )
+    assert isinstance( dofmap, util.BisectMap )
     self.dofmap = dofmap
+
     ArrayFunc.__init__( self, args=(cascade,dofmap), evalf=self.evalmap, shape=[axis], dtype=int )
 
   @staticmethod
@@ -2959,14 +2995,17 @@ def opposite( arg ):
     
   return arg._opposite()
 
-def function( fmap, nmap, ndofs, ndims ):
+def function( elems, fmap, nmap, ndofs, ndims ):
   'create function on ndims-element'
 
   axis = '~%d' % ndofs
-  cascade = Cascade(ndims)
-  func = Function( cascade, fmap, igrad=0, axis=axis )
-  dofmap = DofMap( cascade, nmap, axis=axis )
-  return Inflate( func, dofmap, length=int(ndofs), axis=0 )
+  index = FindElem( elems )
+  dofs = GetItemArray( nmap, index, shape=(axis,) )
+  elem = GetItem( elems, index )
+  std = GetItem( fmap, index )
+  func = Function( elem, std, ndims=ndims, igrad=0, axis=axis )
+
+  return Inflate( func, dofs, length=int(ndofs), axis=0 )
 
 def take( arg, index, axis ):
   'take index'

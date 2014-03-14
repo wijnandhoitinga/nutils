@@ -446,27 +446,27 @@ class StructuredTopology( Topology ):
       dofcount *= nd
       slices.append( [ slice(i,i+p+1) for i in range(n) ] )
 
-    dofmap = {}
-    funcmap = {}
+    dofmap = numeric.empty( len(self), dtype=object )
+    funcmap = numeric.empty( len(self), dtype=object )
     hasnone = False
     for item in numeric.broadcast( self.istructure, stdelems, *numeric.ix_(*slices) ):
       ielem = item[0]
-      elem = self.elements[ ielem ][:-1]
       std = item[1]
-      if elem is None:
+      if ielem < 0:
         hasnone = True
       else:
         S = item[2:]
         dofs = vertex_structure[S].ravel()
         mask = numeric.greater_equal( dofs, 0 )
         if mask.all():
-          dofmap[ elem ] = dofs
-          funcmap[elem] = std
+          dofmap[ ielem ] = dofs
+          funcmap[ ielem ] = std
         elif mask.any():
-          dofmap[ elem ] = dofs[mask]
-          funcmap[elem] = std, mask
+          dofmap[ ielem ] = dofs[mask]
+          funcmap[ ielem ] = std, mask
 
     if hasnone:
+      raise NotImplementedError
       touched = numeric.zeros( dofcount, dtype=bool )
       for dofs in dofmap.itervalues():
         touched[ dofs ] = True
@@ -474,7 +474,8 @@ class StructuredTopology( Topology ):
       dofcount = int(renumber[-1])
       dofmap = dict( ( elem, renumber[dofs]-1 ) for elem, dofs in dofmap.iteritems() )
 
-    return function.function( funcmap, dofmap, dofcount, self.ndims )
+    elements = numeric.asobjvec( elem[:-1] for elem in self )
+    return function.function( elements, funcmap, dofmap, dofcount, self.ndims )
 
   def stdfunc( self, degree ):
     'spline from vertices'
