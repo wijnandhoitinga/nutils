@@ -27,6 +27,10 @@ class Topology( object ):
     self.elements = numeric.asobjvec( elements )
     assert numeric.greater( self.elements[1:], self.elements[:-1] ).all() # check sorted
 
+  @property
+  def elements_nohead( self ):
+    return numeric.asobjvec( elem[:-1] for elem in self )
+
   def __getitem__( self, item ):
     return self.elements[ item ]
 
@@ -320,23 +324,14 @@ class Topology( object ):
   def refined_by( self, refine ):
     'create refined space by refining dofs in existing one'
 
-    refine = list( refine )
-    refined = [] # all elements of refined topology, max 1 level finer than current
-    for elem in self:
-      if elem[:-1] in refine:
-        refine.remove( elem[:-1] )
-        refined.extend( elem[:-1] + child for child in elem[-1].children )
-      else:
-        refined.append( elem )
-        # only for argument checking: remove parents from refine
-        pelem = elem
-        while pelem:
-          pelem = pelem[:-1]
-          if pelem in refine:
-            refine.remove( pelem )
-
-    assert not refine, 'not all refinement elements were found: %s' % '\n '.join( str(e) for e in refine )
-    return HierarchicalTopology( self, refined )
+    elements = list( self )
+    for elem in refine:
+      index = numeric.bisect( elements, elem ) + 1
+      match = elements[index]
+      assert match[:len(elem)] == elem
+      if len(match) == len(elem) + 1: # elem is top level -> refine
+        elements[index:index+1] = sorted( match[:-1] + child for child in match[-1].children )
+    return HierarchicalTopology( self, elements )
 
 class UnstructuredTopology( Topology ):
 
@@ -460,10 +455,11 @@ class StructuredTopology( Topology ):
         mask = numeric.greater_equal( dofs, 0 )
         if mask.all():
           dofmap[ ielem ] = dofs
-          funcmap[ ielem ] = std
+          func = std
         elif mask.any():
           dofmap[ ielem ] = dofs[mask]
-          funcmap[ ielem ] = std, mask
+          func = std, mask
+        funcmap[ ielem ] = (None,) * len(self.elements[ielem][1:-1]) + (func,)
 
     if hasnone:
       raise NotImplementedError
@@ -474,8 +470,7 @@ class StructuredTopology( Topology ):
       dofcount = int(renumber[-1])
       dofmap = dict( ( elem, renumber[dofs]-1 ) for elem, dofs in dofmap.iteritems() )
 
-    elements = numeric.asobjvec( elem[:-1] for elem in self )
-    return function.function( elements, funcmap, dofmap, dofcount, self.ndims )
+    return function.function( self.elements_nohead, funcmap, dofmap, dofcount, self.ndims )
 
   def stdfunc( self, degree ):
     'spline from vertices'
@@ -500,7 +495,7 @@ class StructuredTopology( Topology ):
       dofcount *= nd
       slices.append( [ slice(p*i,p*i+p+1) for i in range(n) ] )
 
-    dofmap = {}
+    dofmap = numeric.empty( len(self), dtype=object )
     hasnone = False
     for item in numeric.broadcast( self.istructure, *numeric.ix_(*slices) ):
       ielem = item[0]
@@ -509,9 +504,10 @@ class StructuredTopology( Topology ):
       else:
         elem = self.elements[ ielem ]
         S = item[1:]
-        dofmap[ elem[:-1] ] = vertex_structure[S].ravel()
+        dofmap[ielem] = vertex_structure[S].ravel()
 
     if hasnone:
+      raise NotImplementedError
       touched = numeric.zeros( dofcount, dtype=bool )
       for dofs in dofmap.itervalues():
         touched[ dofs ] = True
@@ -519,9 +515,10 @@ class StructuredTopology( Topology ):
       dofcount = int(renumber[-1])
       dofmap = dict( ( elem, renumber[dofs]-1 ) for elem, dofs in dofmap.iteritems() )
 
-    stdelem = util.product( element.PolyLine( element.PolyLine.bernstein_poly( d ) ) for d in degree )
-    funcmap = { elem[:-1]: stdelem for elem in self }
-    return function.function( funcmap, dofmap, dofcount, self.ndims )
+    std = util.product( element.PolyLine( element.PolyLine.bernstein_poly( d ) ) for d in degree )
+    funcmap = numeric.asobjvec( (None,) * len(elem[1:-1]) + (std,) for elem in self )
+
+    return function.function( self.elements_nohead, funcmap, dofmap, dofcount, self.ndims )
 
   @cache.property
   def refined( self ):
@@ -554,54 +551,54 @@ class HierarchicalTopology( Topology ):
   @log.title
   def _funcspace( self, mkspace ):
 
-    dofmap = {} # IEN mapping of new function object
-    stdmap = {} # shape function mapping of new function object, plus boolean vector indicating which shapes to retain
+    collect = {}
     ndofs = 0 # total number of dofs of new function object
     remaining = len(self) # element count down (know when to stop)
   
     topo = self.basetopo # topology to examine in next level refinement
-    newdiscard = []
-    parentelems = []
     for irefine in range( self.maxrefine+1 ):
 
       funcsp = mkspace( topo ) # shape functions for level irefine
-      (func,(dofaxis,)), = function.blocks( funcsp ) # separate elem-local funcs and global placement index
-  
-      discard = set(newdiscard)
-      newdiscard = []
       supported = numeric.ones( funcsp.shape[0], dtype=bool ) # True if dof is contained in topoelems or parentelems
       touchtopo = numeric.zeros( funcsp.shape[0], dtype=bool ) # True if dof touches at least one topoelem
       myelems = [] # all top-level or parent elements in level irefine
-      for elem in topo:
-        idofs = dofaxis.dofmap[ elem[:-1] ]
-        if numeric.containssorted( self.elements, elem ):
+
+      for elem, idofs, stds in function._unpack( funcsp ):
+        index = numeric.bisect( self.elements_nohead, elem )
+        found = self.elements_nohead[index]
+        if found == elem:
           remaining -= 1
           touchtopo[idofs] = True
-          myelems.append( elem )
-          newdiscard.append( elem[:-1] )
-        elif elem[:-2] in discard:
-          newdiscard.append( elem[:-1] )
+          myelems.append(( elem, idofs, stds ))
+        elif elem[:len(found)] == found:
           supported[idofs] = False
         else:
-          parentelems.append( elem )
-          myelems.append( elem )
+          myelems.append(( elem, idofs, stds ))
   
       keep = numeric.logical_and( supported, touchtopo ) # THE refinement law
 
-      for elem in myelems: # loop over all top-level or parent elements in level irefine
-        idofs = dofaxis.dofmap[ elem[:-1] ] # local dof numbers
-        mykeep = keep[idofs]
-        std = func.stdmap[ elem[:-1] ]
+      for elem, idofs, stds in myelems: # loop over all top-level or parent elements in level irefine
+        assert all( std is None for std in stds[:-1] )
+        std = stds[-1]
         assert isinstance(std,element.StdElem)
-        newdofs = [ ndofs + keep[:idof].sum() for idof in idofs if keep[idof] ] # new dof numbers
-        newstds = [ std if mykeep.all() # use all shapes from this level
+        if irefine:
+          olddofs, oldstds = collect[ elem[:-1] ] # dofs, stds of all underlying 'broader' shapes
+          assert len(stds) == len(oldstds) + 1
+        else:
+          olddofs = numeric.zeros( [0], dtype=int )
+          oldstds = stds[:-1]
+
+        mykeep = keep[idofs]
+        newstds = oldstds \
+                + ( std if mykeep.all() # use all shapes from this level
                else (std,mykeep) if mykeep.any() # use some shapes from this level
-               else None ]
-        if irefine: # not at lowest level
-          newdofs.extend( dofmap[ elem[:-2] ] ) # add dofs of all underlying 'broader' shapes
-          newstds.extend( stdmap[ elem[:-2] ] ) # add stds of all underlying 'broader' shapes
-        dofmap[ elem[:-1] ] = numeric.array(newdofs) # add result to IEN mapping of new function object
-        stdmap[ elem[:-1] ] = tuple( newstds )
+               else None, )
+
+        newdofs = olddofs if not mykeep.any() \
+             else numeric.hstack([ olddofs,
+          [ ndofs + keep[:idof].sum() for idof in idofs if keep[idof] ] ]) # new dof numbers
+
+        collect[ elem ] = newdofs, newstds # add result to IEN mapping of new function object
   
       ndofs += int( keep.sum() ) # update total number of dofs
       if not remaining:
@@ -612,11 +609,8 @@ class HierarchicalTopology( Topology ):
 
       raise Exception, 'elements remaining after %d iterations' % self.maxrefine
 
-    for elem in parentelems: # remove auxiliary elements
-      del dofmap[ elem[:-1] ]
-      del stdmap[ elem[:-1] ]
-
-    return function.function( stdmap, dofmap, ndofs, self.ndims )
+    dofmap, funcmap = zip( *[ collect[elem] for elem in self.elements_nohead ] )
+    return function.function( self.elements_nohead, funcmap, dofmap, ndofs, self.ndims )
 
   def stdfunc( self, *args, **kwargs ):
     return self._funcspace( lambda topo: topo.stdfunc( *args, **kwargs ) )
