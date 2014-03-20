@@ -8,7 +8,7 @@ def rectilinear( vertices, periodic=(), name='rect' ):
 
   ndims = len(vertices)
   indices = numeric.grid( len(n)-1 for n in vertices )
-  root = object()
+  root = transform.Root( ndims, object() )
   reference = element.Simplex(1)**ndims
   structure = numeric.empty( indices.shape[1:], dtype=object )
   for index in indices.reshape( ndims, -1 ).T:

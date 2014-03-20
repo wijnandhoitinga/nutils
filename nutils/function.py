@@ -259,6 +259,26 @@ class PointShape( Evaluable ):
 
     return points.shape[:-1]
 
+class RootTrans( Evaluable ):
+  'root transformation'
+
+  __slots__ = 'ndims', 'side'
+
+  def __init__( self, ndims, side=0 ):
+    'constructor'
+
+    self.ndims = ndims
+    self.side = side
+    Evaluable.__init__( self, args=[ELEM,ndims,side], evalf=self.roottrans )
+
+  @staticmethod
+  def roottrans( elem, ndims, side ):
+    'evaluate'
+
+    if len(elem) > 1:
+      return util.product( elem[1:] )
+    return transform.Identity( ndims )
+
 class Cascade( Evaluable ):
   'point cascade: list of (elem,points) tuples'
 
@@ -295,13 +315,20 @@ class Cascade( Evaluable ):
   def inv( self ):
     return Cascade( self.ndims, 1-self.side )
 
+class Element( Evaluable ):
+  __slots__ = 'ndims',
+
+  def __init__( self, ndims ):
+    self.ndims = ndims
+    Evaluable.__init__( self, args=[ELEM,ndims], evalf=transform.prioritize )
+
 class FindElem( Evaluable ):
 
   __slots__ = 'elements',
 
-  def __init__( self, sorted_elems ):
+  def __init__( self, sorted_elems, elem ):
     self.elements = sorted_elems
-    Evaluable.__init__( self, args=[sorted_elems,ELEM], evalf=self.findelem )
+    Evaluable.__init__( self, args=[sorted_elems,elem], evalf=self.findelem )
 
   @staticmethod
   def findelem( sorted_elems, elem ):
@@ -777,15 +804,16 @@ class Transform( ArrayFunc ):
 class Function( ArrayFunc ):
   'function'
 
-  __slots__ = 'std', 'ndims', 'igrad'
+  __slots__ = 'elem', 'std', 'igrad'
 
-  def __init__( self, std, ndims, igrad, axis ):
+  def __init__( self, elem, std, igrad, axis ):
     'constructor'
 
+    assert isinstance( elem, Element )
+    self.elem = elem
     self.std = std
     self.igrad = igrad
-    self.ndims = ndims
-    ArrayFunc.__init__( self, args=(CACHE,POINTS,ELEM,std,igrad), evalf=self.function, shape=(axis,)+(ndims,)*igrad )
+    ArrayFunc.__init__( self, args=(CACHE,POINTS,elem,std,igrad), evalf=self.function, shape=(axis,)+(elem.ndims,)*igrad )
 
   @staticmethod
   def function( cache, points, elem, stds, igrad ):
@@ -794,10 +822,9 @@ class Function( ArrayFunc ):
     fvals = []
     for i, std in enumerate( stds ):
       if i:
-        if i == 1:
-          downtrans = elem[i]
-        else:
-          downtrans *= elem[i]
+        downtrans *= elem[i]
+      else:
+        downtrans = elem[i]
       if std:
         elempoints = points if i+1 == len(elem) \
                 else cache( util.product(elem[i+1:]).apply, points )
@@ -806,22 +833,21 @@ class Function( ArrayFunc ):
           F = cache( std.eval, elempoints, igrad )[(Ellipsis,keep)+(slice(None),)*igrad]
         else:
           F = cache( std.eval, elempoints, igrad )
-        if i:
-          invmat = downtrans.inv.matrix
-          for axis in range(-igrad,0):
-            F = numeric.dot( F, invmat, axis )
+        invmat = downtrans.inv.matrix
+        for axis in range(-igrad,0):
+          F = numeric.dot( F, invmat, axis )
         fvals.append( F )
 
     return fvals[0] if len(fvals) == 1 \
       else numeric.concatenate( fvals, axis=-1-igrad )
 
   def _opposite( self ):
-    return Function( self.std, self.ndims, self.igrad, self.shape[0] )
+    return Function( self.elem, self.std, self.igrad, self.shape[0] )
 
   def _localgradient( self, ndims ):
-    assert ndims <= self.ndims
-    grad = Function( self.std, self.ndims, self.igrad+1, self.shape[0] )
-    if ndims == self.ndims:
+    assert ndims <= self.elem.ndims
+    grad = Function( self.elem, self.std, self.igrad+1, self.shape[0] )
+    if ndims == self.elem.ndims:
       return grad
     else:
       raise NotImplementedError
@@ -2668,10 +2694,10 @@ def localgradient( arg, ndims ):
 
   return lgrad
 
-def dotnorm( arg, coords, ndims=0 ):
+def dotnorm( arg, coords ):
   'normal component'
 
-  return sum( arg * coords.normal( ndims-1 ) )
+  return sum( arg * coords.normal() )
 
 def kronecker( arg, axis, length, pos ):
   'kronecker'
@@ -2992,10 +3018,11 @@ def function( elems, fmap, nmap, ndofs, ndims ):
   'create function on ndims-element'
 
   axis = '~%d' % ndofs
-  index = FindElem( elems )
+  elem = Element( ndims )
+  index = FindElem( elems, elem )
   dofs = GetItemArray( nmap, index, shape=(axis,) )
   std = GetItem( fmap, index )
-  func = Function( std, ndims=ndims, igrad=0, axis=axis )
+  func = Function( elem, std, igrad=0, axis=axis )
 
   return Inflate( func, dofs, length=int(ndofs), axis=0 )
 
@@ -3159,24 +3186,6 @@ def supp( funcsp, indices ):
     assert not dofs
   return supp
         
-
-
-  #  stdmap = func.stdmap
-  #  for elem, dofs in dofmap.items():
-  #    stds = stdmap[ elem ]
-  #    if not isinstance( stds, tuple ):
-  #      stds = stds,
-  #    for std in stds:
-  #      nshapes = 0 if not std \
-  #         else std[1].sum() if isinstance( std, tuple ) \
-  #         else std.nshapes
-  #      if numeric.intersect1d( dofs[:nshapes], indices, assume_unique=True ).size:
-  #        supp.append( elem )
-  #      dofs = dofs[nshapes:]
-  #      elem = elem[:-1]
-  #    assert not dofs.size
-  #return supp
-
 def _asarray( arg ):
   warnings.warn( '_asarray is deprecated, use asarray instead', DeprecationWarning )
   return asarray( arg )

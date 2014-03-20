@@ -129,7 +129,7 @@ class Simplex( Reference ):
       trans0 = transform.Point( +1 ) + [1]
       trans1 = transform.Point( -1 )
       self.edges = (trans0,edge), (trans1,edge)
-      scale = transform.Scale( numeric.array([.5]) )
+      scale = transform.ScaleUniform( 1, .5 )
       self.children = (scale,self), (scale+[.5],self)
       return
 
@@ -142,8 +142,8 @@ class Simplex( Reference ):
     assert len( self.edges ) == self.ndims + 1
 
     if ndims == 2: # triangle
-      scale = transform.Scale( numeric.asarray([.5,.5]) )
-      negscale = transform.Scale( -numeric.asarray([.5,.5]) )
+      scale = transform.ScaleUniform( 2, .5 )
+      negscale = transform.ScaleUniform( 2, -.5 )
       self.children = (
         ( scale, self ),
         ( scale + [.5, 0], self ),

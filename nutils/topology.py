@@ -27,7 +27,7 @@ class Topology( object ):
     self.elements = numeric.asobjvec( elements )
     assert numeric.greater( self.elements[1:], self.elements[:-1] ).all() # check sorted
 
-  @property
+  @cache.property
   def elements_nohead( self ):
     return numeric.asobjvec( elem[:-1] for elem in self )
 
@@ -381,7 +381,9 @@ class StructuredTopology( Topology ):
       belems = numeric.empty( ielems.shape[:-1], dtype=object )
       for index, ielem in numeric.enumerate_nd( ielems ):
         elem = self.elements[ielem]
-        belems[ index[:-1] ] = elem[:-1] + elem[-1].edges[iedge]
+        belem = elem[:-1] + elem[-1].edges[iedge]
+        belem = transform.prioritize( belem[:-1], ndims=self.ndims-1 ) + belem[-1:]
+        belems[ index[:-1] ] = belem
       periodic = [ d - (d>idim) for d in self.periodic if d != idim ] # TODO check that dimensions are correct for ndim > 2
       boundaries.append( StructuredTopology( belems, periodic=periodic ) )
     groups = dict( zip( ( 'right', 'left', 'top', 'bottom', 'back', 'front' ), boundaries ) )
@@ -559,8 +561,8 @@ class HierarchicalTopology( Topology ):
     for irefine in range( self.maxrefine+1 ):
 
       funcsp = mkspace( topo ) # shape functions for level irefine
-      supported = numeric.ones( funcsp.shape[0], dtype=bool ) # True if dof is contained in topoelems or parentelems
-      touchtopo = numeric.zeros( funcsp.shape[0], dtype=bool ) # True if dof touches at least one topoelem
+      supported = numeric.ones( funcsp.shape[0], dtype=bool ) # True if dof is fully contained in self or parents
+      touchtopo = numeric.zeros( funcsp.shape[0], dtype=bool ) # True if dof touches at least one elem in self
       myelems = [] # all top-level or parent elements in level irefine
 
       for elem, idofs, stds in function._unpack( funcsp ):
