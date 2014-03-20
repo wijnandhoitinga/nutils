@@ -464,7 +464,7 @@ class StructuredTopology( Topology ):
           funcmap[elem] = std
         elif mask.any():
           dofmap[ elem ] = dofs[mask]
-          funcmap[elem] = std, mask
+          funcmap[elem] = (std,mask),
 
     if hasnone:
       touched = numeric.zeros( dofcount, dtype=bool )
