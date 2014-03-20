@@ -28,7 +28,7 @@ class Transformation( cache.Immutable ):
     return NotImplemented
 
   def __repr__( self ):
-    return '%s[%d->%d](%s)' % ( self.__class__.__name__, self.fromdim, self.todim, self )
+    return '%s[%d<-%d](%s)' % ( self.__class__.__name__, self.todim, self.fromdim, self )
 
 
 class Affine( Transformation ):
@@ -197,12 +197,39 @@ class Scale( Linear ):
     return '[%s] x' % ','.join( '%.2f' % v for v in self.factors )
 
 
-class Identity( Scale ):
+class ScaleUniform( Scale ):
+  __slots__ = 'factor',
+
+  def __init__( self, ndims, factor ):
+    self.factor = factor
+    Scale.__init__( self, numeric.appendaxes( factor, ndims ) )
+
+  def __mul__( self, other ):
+    assert self.fromdim == other.todim
+    return ScaleUniform( self.factor * other.factor ) if isinstance( other, ScaleUniform ) \
+      else Scale.__mul__( self, other )
+
+  def apply( self, points, axis=-1 ):
+    assert points.shape[axis] == self.fromdim
+    return points * self.factor
+
+  @property
+  def det( self ):
+    return self.factor**self.todim
+
+  @property
+  def inv( self ):
+    return ScaleUniform( self.todim, 1./self.factor )
+
+  def __str__( self ):
+    return '%s x' % self.factor
+
+
+class Identity( ScaleUniform ):
   __slots__ = ()
 
   def __init__( self, ndims ):
-    factors = numeric.ones( ndims )
-    Scale.__init__( self, factors )
+    ScaleUniform.__init__( self, ndims, 1. )
 
   def apply( self, points, axis=-1 ):
     return points
@@ -225,6 +252,13 @@ class Identity( Scale ):
 
   def __str__( self ):
     return 'x'
+
+
+class Root( Identity ):
+  __slots__ = ()
+
+  def __init__( self, ndims, token ):
+    Identity.__init__( self, ndims )
 
 
 class Point( Linear ):
@@ -258,6 +292,8 @@ def tensor( trans1, trans2 ):
     trans2 = trans2.transform
   if isinstance( trans1, Identity ) and isinstance( trans2, Identity ):
     linear = Identidy( todim )
+  elif isinstance( trans1, ScaleUniform ) and isinstance( trans2, ScaleUniform ) and trans1.factor == trans2.factor:
+    linear = ScaleUniform( trans1.fromdim + trans2.fromdim, trans1.factor )
   elif isinstance( trans1, Scale ) and isinstance( trans2, Scale ):
     linear = Scale( numeric.concatenate([ trans1.factors, trans2.factors ]) )
   else:
@@ -277,3 +313,50 @@ def tensor( trans1, trans2 ):
       raise NotImplementedError
     linear = Linear( matrix, sign )
   return linear + offset
+
+def split_linear_offset( trans ):
+  if isinstance( trans, Affine ):
+    return trans.transform, trans.offset
+  return trans, numeric.zeros( trans.todim )
+
+def swap_up_scale( updim, scale ):
+  if updim.todim != updim.fromdim + 1:
+    return updim, scale
+  _scale, d = split_linear_offset(scale)
+  if not isinstance( _scale, ScaleUniform ):
+    return updim, scale
+  _updim, b = split_linear_offset(updim)
+  c = _updim.apply( d ) + (1-_scale.factor) * b
+  newscale = ScaleUniform( updim.todim, _scale.factor ) + c
+  assert newscale * updim == updim * scale
+  return newscale, updim
+
+def swap_scale_up( scale, updim ):
+  if isinstance( scale, Root ) or updim.todim != updim.fromdim + 1:
+    return scale, updim
+  _scale, c = split_linear_offset(scale)
+  if not isinstance( _scale, ScaleUniform ):
+    return scale, updim
+  _updim, b = split_linear_offset(updim)
+  A = _updim.matrix
+  AA = numeric.dot( A.T, A )
+  Av = numeric.dot( A.T, c + (_scale.factor-1) * b )
+  d = numeric.solve( AA, Av )
+  newscale = ScaleUniform( updim.fromdim, _scale.factor ) + d
+  assert updim * newscale == scale * updim
+  return updim, newscale
+
+def prioritize( trans, ndims ):
+  assert trans[-1].fromdim <= trans[0].todim
+  if trans[-1].fromdim == trans[0].todim:
+    return trans
+  trans = list( trans )
+  if trans[-1].fromdim == ndims:
+    for i in reversed( range(1,len(trans)) ):
+      trans[i-1:i+1] = swap_scale_up( *trans[i-1:i+1] )
+  elif trans[0].todim == ndims:
+    for i in range(1,len(trans)):
+      trans[i-1:i+1] = swap_up_scale( *trans[i-1:i+1] )
+  else:
+    raise Exception
+  return tuple( trans )
