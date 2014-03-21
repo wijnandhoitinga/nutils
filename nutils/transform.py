@@ -206,7 +206,7 @@ class ScaleUniform( Scale ):
 
   def __mul__( self, other ):
     assert self.fromdim == other.todim
-    return ScaleUniform( self.factor * other.factor ) if isinstance( other, ScaleUniform ) \
+    return ScaleUniform( self.todim, self.factor * other.factor ) if isinstance( other, ScaleUniform ) \
       else Scale.__mul__( self, other )
 
   def apply( self, points, axis=-1 ):

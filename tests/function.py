@@ -13,20 +13,22 @@ line_points, dummy = points(line)
 quad = line**2
 quad_points, dummy = points(quad)
 
-elem = ( object(),
+elem = ( transform.Root( 2, object() ),
   transform.Linear( numeric.array([[2,1],[-1,3]]) ) + [1,0], # corners at (1,0), (3,-1), (4,2), (2,3)
   transform.Linear( numeric.array([[0,1],[-1,0]]) ) + [1,0], # corners at (3,-1), (2,-4), (4,-5), (5,-2)
   quad )
 
-root_transform = elem[1] * elem[2]
+root_transform = util.product( elem[:-1] )
 
 #iface = element.Element( line,
 #  vertices=tuple( 'C(%d)'%i for i in range(2) ),
 #  interface=(elem.edge(1).context,elem.edge(0).context),
 #)
-funcsp = function.function( ndims=2, ndofs=6,
-  fmap={ elem[:-1]: line.stdfunc(1) * line.stdfunc(2) },
-  nmap={ elem[:-1]: numeric.arange(6) },
+funcsp = function.function( elems=[ elem[:-1] ],
+  fmap=[ (None,None,line.stdfunc(1)*line.stdfunc(2)) ],
+  nmap=[ numeric.arange(6) ],
+  ndofs=6,
+  ndims=2,
 )
 geom_compiled = geom.compiled()
 

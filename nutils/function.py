@@ -3152,7 +3152,7 @@ def iwscale( coords, ndims ):
 
 
 def _unpack( funcsp ):
-  # FRAGILE! makes lots of assumptions on the nature of funcsp
+  # makes lots of assumptions about the nature of funcsp
   for func, axes in funcsp.blocks:
     dofmap = axes[0]
     assert isinstance( dofmap, GetItemArray )
