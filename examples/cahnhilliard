@@ -52,7 +52,8 @@ def main( nelems=40, epsilon=.04, timestep=.01, sym3d=False, seed=0 ):
   numeric.seed( seed )
   c = funcsp.dot( numeric.normal( -.3, .01, funcsp.shape ) )
 
-  for iiter, __logger__ in log.count( 'timestep' ):
+  __logger__ = log.count( 'timestep' )
+  for iiter in __logger__:
 
     makeplots( domain, geom, c, psi(c), iiter )
 

@@ -269,51 +269,15 @@ class RootTrans( Evaluable ):
 
     self.ndims = ndims
     self.side = side
-    Evaluable.__init__( self, args=[ELEM,ndims,side], evalf=self.roottrans )
+    Evaluable.__init__( self, args=[Element(ndims),ndims,side], evalf=self.roottrans )
 
   @staticmethod
   def roottrans( elem, ndims, side ):
     'evaluate'
 
-    if len(elem) > 1:
-      return util.product( elem[1:] )
-    return transform.Identity( ndims )
-
-class Cascade( Evaluable ):
-  'point cascade: list of (elem,points) tuples'
-
-  __slots__ = 'ndims', 'side'
-
-  def __init__( self, ndims, side=0 ):
-    'constructor'
-
-    self.ndims = ndims
-    self.side = side
-    Evaluable.__init__( self, args=[ELEM,ndims,side], evalf=self.cascade )
-
-  def transform( self, ndims ):
-    if ndims == self.ndims:
-      return eye( ndims )
-    assert self.ndims > ndims
-    return Transform( self, Cascade(ndims,self.side) )
-
-  @staticmethod
-  def cascade( elem, ndims, side ):
-    'evaluate'
-
-    trans = transform.Identity( elem[-1].fromdim )
-    cascade = []
-    while True:
-      if trans.todim == ndims:
-        cascade.append( (elem,trans) )
-      if len(elem) == 1:
-        return cascade or [( None, transform.Identity(ndims) )]
-      trans = elem[-1] * trans
-      elem = elem[:-1]
-
-  @property
-  def inv( self ):
-    return Cascade( self.ndims, 1-self.side )
+    while elem[0].todim != ndims:
+      elem = elem[1:]
+    return util.product( elem )
 
 class Element( Evaluable ):
   __slots__ = 'ndims',
@@ -741,14 +705,13 @@ class IWeights( ArrayFunc ):
   def __init__( self, ndims ):
     'constructor'
 
-    ArrayFunc.__init__( self, args=[Cascade(ndims),WEIGHTS], evalf=self.iweights, shape=() )
+    ArrayFunc.__init__( self, args=[RootTrans(ndims),WEIGHTS], evalf=self.iweights, shape=() )
 
   @staticmethod
-  def iweights( cascade, weights ):
+  def iweights( roottrans, weights ):
     'evaluate'
 
-    root, trans = cascade[-1]
-    return trans.det * weights
+    return roottrans.det * weights
 
 class NWeights( ArrayFunc ):
   __slots__ = ()
@@ -756,20 +719,19 @@ class NWeights( ArrayFunc ):
   def __init__( self, ndims ):
     'constructor'
 
-    ArrayFunc.__init__( self, args=[Cascade(ndims),WEIGHTS], evalf=self.nweights, shape=(ndims,) )
+    ArrayFunc.__init__( self, args=[RootTrans(ndims),WEIGHTS], evalf=self.nweights, shape=(ndims,) )
 
   @staticmethod
-  def nweights( cascade, weights ):
+  def nweights( roottrans, weights ):
     'evaluate'
 
-    root, trans = cascade[-1]
-    if trans.fromdim == trans.todim:
+    if roottrans.fromdim == roottrans.todim:
       assert weights.ndim == 2 # points x ndims
-      scale = numeric.solve( trans.matrix.T, weights.T ).T # points x ndims
+      scale = numeric.solve( roottrans.matrix.T, weights.T ).T # points x ndims
     else:
       assert weights.ndim == 1 # points
       scale = weights # points
-    return numeric.times( scale, trans.det )
+    return numeric.times( scale, roottrans.det )
 
 class Transform( ArrayFunc ):
   'transform'
@@ -1725,26 +1687,29 @@ class Power( ArrayFunc ):
 class ElemFunc( ArrayFunc ):
   'trivial func'
 
-  __slots__ = 'cascade',
+  __slots__ = 'roottrans',
 
   def __init__( self, ndims, side=0 ):
     'constructor'
 
-    self.cascade = Cascade( ndims, side )
-    ArrayFunc.__init__( self, args=[POINTS,self.cascade], evalf=self.elemfunc, shape=[ndims] )
+    self.roottrans = RootTrans( ndims, side )
+    ArrayFunc.__init__( self, args=[POINTS,self.roottrans], evalf=self.elemfunc, shape=[ndims] )
 
   @staticmethod
-  def elemfunc( points, cascade ):
+  def elemfunc( points, roottrans ):
     'evaluate'
 
-    root, trans = cascade[-1]
-    return trans.apply( points )
+    return roottrans.apply( points )
 
   def _localgradient( self, ndims ):
-    return self.cascade.transform( ndims )
+    if ndims == self.roottrans.ndims:
+      return eye( ndims )
+    assert self.ndims > ndims
+    raise NotImplementedError
+    return Transform( self, Cascade(ndims,self.side) )
 
   def _opposite( self ):
-    return ElemFunc( self.cascade.ndims, 1-self.cascade.side )
+    return ElemFunc( self.roottrans.ndims, 1-self.roottrans.side )
 
   def find( self, elem, C ):
     'find coordinates'
