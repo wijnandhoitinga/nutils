@@ -9,9 +9,13 @@ class TestCaptureLog( log.CaptureLog ):
     return log.CaptureLog.__call__( self, level, *contexts )
   def __str__( self ):
     return '---captured output---\n%s---------------------' % log.CaptureLog.__str__(self)
+
+whitelist = sys.argv[1:]
     
 def testgroup( func ):
   def wrapped( *args, **kwargs ):
+    if whitelist and args[0] not in whitelist:
+      return
     firstarg = func.func_code.co_varnames[0]
     sys.stdout.write( ' * %s=%s [' % ( firstarg, args[0] if args else kwargs[firstarg] ) )
     sys.stdout.flush()

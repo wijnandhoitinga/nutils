@@ -25,7 +25,7 @@ root_transform = util.product( elem[:-1] )
 #  interface=(elem.edge(1).context,elem.edge(0).context),
 #)
 funcsp = function.function( elems=[ elem[:-1] ],
-  fmap=[ (None,None,line.stdfunc(1)*line.stdfunc(2)) ],
+  fmap=[ (None,None,None,line.stdfunc(1)*line.stdfunc(2)) ],
   nmap=[ numeric.arange(6) ],
   ndofs=6,
   ndims=2,

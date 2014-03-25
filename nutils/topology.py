@@ -382,13 +382,14 @@ class StructuredTopology( Topology ):
       for index, ielem in numeric.enumerate_nd( ielems ):
         elem = self.elements[ielem]
         belem = elem[:-1] + elem[-1].edges[iedge]
-        belem = transform.prioritize( belem[:-1], ndims=self.ndims-1 ) + belem[-1:]
+        belem = transform.canonical( belem[:-1] ) + belem[-1:]
         belems[ index[:-1] ] = belem
       periodic = [ d - (d>idim) for d in self.periodic if d != idim ] # TODO check that dimensions are correct for ndim > 2
-      boundaries.append( StructuredTopology( belems, periodic=periodic ) )
+      boundaries.append( StructuredTopology( belems, periodic=periodic ) if self.ndims > 1
+                    else Topology( self.ndims-1, list(belems.flat) ) )
     groups = dict( zip( ( 'right', 'left', 'top', 'bottom', 'back', 'front' ), boundaries ) )
 
-    allbelems = [ boundary.elements[ibelem] for boundary in boundaries for ibelem in boundary.istructure.flat if ibelem >= 0 ]
+    allbelems = [ belem for boundary in boundaries for belem in boundary ]
     return UnstructuredTopology( elements=allbelems, ndims=self.ndims-1, groups=groups )
 
   def splinefunc( self, degree, neumann=(), periodic=None, closed=False, removedofs=None ):
@@ -461,7 +462,7 @@ class StructuredTopology( Topology ):
         elif mask.any():
           dofmap[ ielem ] = dofs[mask]
           func = std, mask
-        funcmap[ ielem ] = (None,) * len(self.elements[ielem][1:-1]) + (func,)
+        funcmap[ ielem ] = (None,) * len(self.elements[ielem][:-1]) + (func,)
 
     if hasnone:
       raise NotImplementedError
@@ -518,7 +519,7 @@ class StructuredTopology( Topology ):
       dofmap = dict( ( elem, renumber[dofs]-1 ) for elem, dofs in dofmap.iteritems() )
 
     std = util.product( element.PolyLine( element.PolyLine.bernstein_poly( d ) ) for d in degree )
-    funcmap = numeric.asobjvec( (None,) * len(elem[1:-1]) + (std,) for elem in self )
+    funcmap = numeric.asobjvec( (None,) * len(elem[:-1]) + (std,) for elem in self )
 
     return function.function( self.elements_nohead, funcmap, dofmap, dofcount, self.ndims )
 

@@ -262,20 +262,23 @@ class PointShape( Evaluable ):
 class RootTrans( Evaluable ):
   'root transformation'
 
-  __slots__ = 'ndims', 'side'
+  __slots__ = 'todim', 'side'
 
-  def __init__( self, ndims, side=0 ):
+  def __init__( self, todim, side=0 ):
     'constructor'
 
-    self.ndims = ndims
+    self.todim = todim
     self.side = side
-    Evaluable.__init__( self, args=[Element(ndims),ndims,side], evalf=self.roottrans )
+    Evaluable.__init__( self, args=[ELEM,todim,side], evalf=self.roottrans )
 
   @staticmethod
-  def roottrans( elem, ndims, side ):
+  def roottrans( elem, todim, side ):
     'evaluate'
 
-    while elem[0].todim != ndims:
+    if elem[-1].todim != todim:
+      assert elem[-1].fromdim == todim
+      return transform.Identity( todim )
+    while elem[0].todim != todim:
       elem = elem[1:]
     return util.product( elem )
 
@@ -497,7 +500,7 @@ class ArrayFunc( Evaluable ):
   def nsymgrad( self, coords, ndims=0 ):
     'normal gradient'
 
-    return dotnorm( self.symgrad( coords, ndims ), coords, ndims )
+    return dotnorm( self.symgrad( coords, ndims ), coords )
 
   @property
   def T( self ):
@@ -511,6 +514,30 @@ class ArrayFunc( Evaluable ):
     return '%s<%s>' % ( self.__class__.__name__, ','.join(map(str,self.shape)) )
 
   __repr__ = __str__
+
+class Transform( ArrayFunc ):
+  'transformation'
+
+  __slots__ = 'todim', 'fromdim', 'side'
+
+  def __init__( self, todim, fromdim, side=0 ):
+    'constructor'
+
+    assert fromdim < todim
+    self.todim = todim
+    self.fromdim = fromdim
+    self.side = side
+    ArrayFunc.__init__( self, args=[ELEM,todim,fromdim,side], evalf=self.transform, shape=(todim,fromdim) )
+
+  @staticmethod
+  def transform( elem, todim, fromdim, side ):
+    'evaluate'
+
+    while elem[0].todim != todim:
+      elem = elem[1:]
+    while elem[-1].fromdim != fromdim:
+      elem = elem[:-1]
+    return util.product( elem ).matrix
 
 class GetItemArray( ArrayFunc ):
 
@@ -550,7 +577,7 @@ class ElemInt( ArrayFunc ):
   def __init__( self, func, weights ):
     'constructor'
 
-    assert _isfunc( func ) and _isfunc( weights )
+    assert _isfunc( func )
     assert weights.ndim == 0
     ArrayFunc.__init__( self, args=[weights,func,func.ndim], evalf=self.elemint, shape=func.shape )
 
@@ -733,36 +760,6 @@ class NWeights( ArrayFunc ):
       scale = weights # points
     return numeric.times( scale, roottrans.det )
 
-class Transform( ArrayFunc ):
-  'transform'
-
-  __slots__ = 'fromcascade', 'tocascade', 'side'
-
-  def __init__( self, fromcascade, tocascade, side=0 ):
-    'constructor'
-
-    raise Exception # TEMPORARY?
-
-    assert fromcascade.ndims > tocascade.ndims
-    self.fromcascade = fromcascade
-    self.tocascade = tocascade
-    self.side = side
-    ArrayFunc.__init__( self, args=[fromcascade,tocascade,side], evalf=self.transform, shape=(fromcascade.ndims,tocascade.ndims) )
-
-  @staticmethod
-  def transform( fromcascade, tocascade, side ):
-    'transform'
-
-    fromelem, fromtrans = fromcascade[-1]
-    toelem, totrans = tocascade[-1]
-    return ( fromtrans * totrans.inv ).matrix
-
-  def _localgradient( self, ndims ):
-    return _zeros( self.shape + (ndims,) )
-
-  def _opposite( self ):
-    return Transform( self.fromcascade, self.tocascade, 1-self.side )
-
 class Function( ArrayFunc ):
   'function'
 
@@ -781,24 +778,35 @@ class Function( ArrayFunc ):
   def function( cache, points, elem, stds, igrad ):
     'evaluate'
 
+    
+    n = len(stds) - 1
+    last = transform.Identity(points.shape[-1]) if len(elem) == n \
+      else util.product( elem[n:] )
+    elemn = elem[:n] + (last,)
+    stdsn = stds
+    assert len(elemn) == len(stdsn)
+    while elemn[0].todim != last.todim:
+      assert not stds[0]
+      stdsn = stdsn[1:]
+      elemn = elemn[1:]
+
     fvals = []
-    for i, std in enumerate( stds ):
-      if i:
-        downtrans *= elem[i]
-      else:
-        downtrans = elem[i]
+
+    roottrans = transform.Identity( last.todim )
+    for std in stdsn:
       if std:
-        elempoints = points if i+1 == len(elem) \
-                else cache( util.product(elem[i+1:]).apply, points )
+        elempoints = cache( util.product(elemn).apply, points ) if elemn else points
         if isinstance( std, tuple ):
           std, keep = std
           F = cache( std.eval, elempoints, igrad )[(Ellipsis,keep)+(slice(None),)*igrad]
         else:
           F = cache( std.eval, elempoints, igrad )
-        invmat = downtrans.inv.matrix
+        invmat = roottrans.inv.matrix
         for axis in range(-igrad,0):
           F = numeric.dot( F, invmat, axis )
         fvals.append( F )
+      roottrans *= elemn[0]
+      elemn = elemn[1:]
 
     return fvals[0] if len(fvals) == 1 \
       else numeric.concatenate( fvals, axis=-1-igrad )
@@ -811,9 +819,8 @@ class Function( ArrayFunc ):
     grad = Function( self.elem, self.std, self.igrad+1, self.shape[0] )
     if ndims == self.elem.ndims:
       return grad
-    else:
-      raise NotImplementedError
-      return dot( grad[...,_], self.cascade.transform( ndims ), axes=-2 )
+    trans = Transform( fromdim=ndims, todim=self.elem.ndims )
+    return dot( grad[...,_], trans, axes=-2 )
 
 class Choose( ArrayFunc ):
   'piecewise function'
@@ -1702,7 +1709,7 @@ class ElemFunc( ArrayFunc ):
     return roottrans.apply( points )
 
   def _localgradient( self, ndims ):
-    if ndims == self.roottrans.ndims:
+    if ndims == self.roottrans.todim:
       return eye( ndims )
     assert self.ndims > ndims
     raise NotImplementedError
@@ -3104,6 +3111,9 @@ def fdapprox( func, w, dofs, delta=1.e-5 ):
 
 def iwscale( coords, ndims ):
   'integration weights scale'
+
+  if ndims == 0:
+    return IWeights( ndims )
 
   cndims, = coords.shape
   J = localgradient( coords, cndims )

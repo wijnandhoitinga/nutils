@@ -188,6 +188,8 @@ class Simplex( Reference ):
 
   def pointset_gauss( self, degree ):
     assert isinstance( degree, int ) and degree >= 0
+    if self.ndims == 0: # point
+      return numeric.zeros((1,0)), numeric.ones(1)
     if self.ndims == 1: # line
       k = numeric.arange( 1, degree // 2 + 1 )
       d = k / numeric.sqrt( 4*k**2-1 )

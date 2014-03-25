@@ -319,44 +319,43 @@ def split_linear_offset( trans ):
     return trans.transform, trans.offset
   return trans, numeric.zeros( trans.todim )
 
-def swap_up_scale( updim, scale ):
-  if updim.todim != updim.fromdim + 1:
-    return updim, scale
-  _scale, d = split_linear_offset(scale)
-  if not isinstance( _scale, ScaleUniform ):
-    return updim, scale
-  _updim, b = split_linear_offset(updim)
-  c = _updim.apply( d ) + (1-_scale.factor) * b
-  newscale = ScaleUniform( updim.todim, _scale.factor ) + c
-  assert newscale * updim == updim * scale
-  return newscale, updim
-
-def swap_scale_up( scale, updim ):
-  if isinstance( scale, Root ) or updim.todim != updim.fromdim + 1:
-    return scale, updim
-  _scale, c = split_linear_offset(scale)
-  if not isinstance( _scale, ScaleUniform ):
-    return scale, updim
-  _updim, b = split_linear_offset(updim)
-  A = _updim.matrix
-  AA = numeric.dot( A.T, A )
-  Av = numeric.dot( A.T, c + (_scale.factor-1) * b )
-  d = numeric.solve( AA, Av )
-  newscale = ScaleUniform( updim.fromdim, _scale.factor ) + d
-  assert updim * newscale == scale * updim
-  return updim, newscale
+def canonical( trans ):
+  # keep at lowest ndims possible
+  for i in reversed( range(1,len(trans)) ):
+    if trans[i].fromdim == trans[0].todim:
+      break
+    while i < len(trans):
+      scale, updim = trans[i-1:i+1]
+      if isinstance( scale, Root ) or updim.todim != updim.fromdim + 1:
+        break
+      _scale, c = split_linear_offset(scale)
+      if not isinstance( _scale, ScaleUniform ):
+        break
+      _updim, b = split_linear_offset(updim)
+      A = _updim.matrix
+      AA = numeric.dot( A.T, A )
+      Av = numeric.dot( A.T, c + (_scale.factor-1) * b )
+      d = numeric.solve( AA, Av )
+      newscale = ScaleUniform( updim.fromdim, _scale.factor ) + d
+      assert updim * newscale == scale * updim
+      trans = trans[:i-1] + (updim,newscale) + trans[i+1:]
+      i += 1
+  return trans
 
 def prioritize( trans, ndims ):
-  assert trans[-1].fromdim <= trans[0].todim
-  if trans[-1].fromdim == trans[0].todim:
-    return trans
-  trans = list( trans )
-  if trans[-1].fromdim == ndims:
-    for i in reversed( range(1,len(trans)) ):
-      trans[i-1:i+1] = swap_scale_up( *trans[i-1:i+1] )
-  elif trans[0].todim == ndims:
-    for i in range(1,len(trans)):
-      trans[i-1:i+1] = swap_up_scale( *trans[i-1:i+1] )
-  else:
-    raise Exception
-  return tuple( trans )
+  # assuming canonical, move up to ndims asap, stay at ndims alap
+  for i in range(1,len(trans)):
+    while i and trans[i].todim < ndims:
+      scale, updim = trans[i-1:i+1]
+      if updim.todim != updim.fromdim + 1:
+        break
+      _scale, d = split_linear_offset(scale)
+      if not isinstance( _scale, ScaleUniform ):
+        break
+      _updim, b = split_linear_offset(updim)
+      c = _updim.apply( d ) + (1-_scale.factor) * b
+      newscale = ScaleUniform( updim.todim, _scale.factor ) + c
+      assert newscale * updim == updim * scale
+      trans = trans[:i-1] + (newscale,updim) + trans[i+1:]
+      i -= 1
+  return trans
