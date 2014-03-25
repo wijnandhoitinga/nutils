@@ -76,6 +76,9 @@ class Affine( Transformation ):
   def matrix( self ):
     return self.transform.matrix
 
+  def __repr__( self ):
+    return '%s[%d<-%d](%s)' % ( self.transform.__class__.__name__, self.todim, self.fromdim, self )
+
   def __str__( self ):
     return '[%s] + %s' % ( ','.join( '%.2f'%v for v in self.offset ), self.transform )
 

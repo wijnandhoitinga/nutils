@@ -275,11 +275,12 @@ class RootTrans( Evaluable ):
   def roottrans( elem, todim, side ):
     'evaluate'
 
-    if elem[-1].todim != todim:
+    if elem[-1].todim > todim:
       assert elem[-1].fromdim == todim
       return transform.Identity( todim )
-    while elem[0].todim != todim:
+    while elem[0].todim > todim:
       elem = elem[1:]
+    assert elem[0].todim == todim
     return util.product( elem )
 
 class Element( Evaluable ):
