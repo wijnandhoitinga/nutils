@@ -3,6 +3,7 @@ all: numeric
 numeric:
 	git submodule init nutils/numeric
 	git submodule update nutils/numeric
+	rm -f nutils/numeric.pyc # for transition
 	$(MAKE) -C nutils/numeric test_c
 
 test:

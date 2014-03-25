@@ -1,4 +1,5 @@
-import weakref
+from . import core, log
+import os, weakref
 
 _property = property
 def property( f ):
@@ -99,11 +100,11 @@ class FileCache( object ):
     strhash = ','.join( str(arg) for arg in args )
     md5hash = hashlib.md5( strhash ).hexdigest()
     log.info( 'using cache:', md5hash )
-    cachedir = getattr( prop, 'cachedir', 'cache' )
+    cachedir = core.prop( 'cachedir', 'cache' )
     if not os.path.exists( cachedir ):
       os.makedirs( cachedir )
     path = os.path.join( cachedir, md5hash )
-    self.data = file( path, 'ab+' if not getattr( prop, 'recache', False ) else 'wb+' )
+    self.data = file( path, 'ab+' if not core.prop( 'recache', False ) else 'wb+' )
 
   def __call__( self, func, *args, **kwargs ):
     'call'
