@@ -13,18 +13,20 @@ line_points, dummy = points(line)
 quad = line**2
 quad_points, dummy = points(quad)
 
-elem = ( transform.Root( 2, object() ),
+trans = ( transform.Root( 2, object() ),
   transform.Linear( numeric.array([[2,1],[-1,3]]) ) + [1,0], # corners at (1,0), (3,-1), (4,2), (2,3)
   transform.Linear( numeric.array([[0,1],[-1,0]]) ) + [1,0], # corners at (3,-1), (2,-4), (4,-5), (5,-2)
-  quad )
+)
+head = quad
+elem = trans, head
 
-root_transform = util.product( elem[:-1] )
+root_transform = util.product( trans )
 
 #iface = element.Element( line,
 #  vertices=tuple( 'C(%d)'%i for i in range(2) ),
 #  interface=(elem.edge(1).context,elem.edge(0).context),
 #)
-funcsp = function.function( elems=[ elem[:-1] ],
+funcsp = function.function( elems=[ trans ],
   fmap=[ (None,None,None,line.stdfunc(1)*line.stdfunc(2)) ],
   nmap=[ numeric.arange(6) ],
   ndofs=6,
@@ -90,7 +92,7 @@ def checkfunc( name, op, n_op, *shapes ):
     fdpoints = quad_points[_,_,:,:] + D[:,:,_,:]
     F = n_op( *argsfunc.eval(elem,fdpoints) )
     fdgrad = ((F[1]-F[0])/eps).transpose( numeric.roll(numeric.arange(F.ndim-1),-1) )
-    G = function.localgradient( op_args, ndims=elem[-1].ndims ).compiled()
+    G = function.localgradient( op_args, ndims=head.ndims ).compiled()
     numpy.testing.assert_array_almost_equal( fdgrad, G.eval(elem,quad_points), decimal=5 )
 
   @unittest
