@@ -46,7 +46,7 @@ class CompiledEvaluable( object ):
     if core.prop( 'dot', False ):
       self.graphviz()
 
-  def eval( self, elem, pointset ):
+  def eval( self, (etrans,ehead), pointset ):
     'evaluate'
 
     if pointset is None:
@@ -55,10 +55,10 @@ class CompiledEvaluable( object ):
       points = pointset
       weights = None
     else:
-      points, weights = self.cache( pointset, elem[-1] )
+      points, weights = self.cache( pointset, ehead )
 
     N = len(self.data) + 4
-    values = self.data + [ self.cache, elem[:-1], points, weights ]
+    values = self.data + [ self.cache, etrans, points, weights ]
     for evalf, indices in self.operations:
       args = [ values[N+i] for i in indices ]
       try:

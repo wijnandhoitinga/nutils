@@ -24,12 +24,21 @@ class Topology( object ):
 
   def __init__( self, ndims, elements ):
     self.ndims = ndims
-    self.elements = numeric.asobjvec( elements )
-    assert numeric.greater( self.elements[1:], self.elements[:-1] ).all() # check sorted
+
+    self.estack = numeric.empty( (len(elements),2), dtype=object )
+    for i, (trans,head) in enumerate( elements ):
+      self.estack[i,0] = trans
+      self.estack[i,1] = head
+
+    assert numeric.greater( self.estack[1:,0], self.estack[:-1,0] ).all() # check sorted
 
   @cache.property
+  def elements( self ):
+    return numeric.asobjvec( map( tuple, self.estack ) )
+
+  @property
   def elements_nohead( self ):
-    return numeric.asobjvec( elem[:-1] for elem in self )
+    return self.estack[:,0]
 
   def __getitem__( self, item ):
     return self.elements[ item ]
@@ -309,7 +318,7 @@ class Topology( object ):
 
   @cache.property
   def simplex( self ):
-    simplices = numeric.asobjvec( elem[:-1] + simplex for elem in self for simplex in elem[-1].simplices )
+    simplices = numeric.asobjvec( (etrans+(strans,),shead) for etrans, ehead in self for strans, shead in ehead.simplices )
     simplices.sort()
     return Topology( ndims=self.ndims, elements=simplices )
 
@@ -380,10 +389,10 @@ class StructuredTopology( Topology ):
       ielems = numeric.getitem( self.istructure[...,_], axis=idim, item=iside ) # add axis to keep an array even if ndims=1
       belems = numeric.empty( ielems.shape[:-1], dtype=object )
       for index, ielem in numeric.enumerate_nd( ielems ):
-        elem = self.elements[ielem]
-        belem = elem[:-1] + elem[-1].edges[iedge]
-        belem = transform.canonical( belem[:-1] ) + belem[-1:]
-        belems[ index[:-1] ] = belem
+        etrans, ehead = self.elements[ielem]
+        edgetrans, edgehead = ehead.edges[iedge]
+        etrans += edgetrans,
+        belems[ index[:-1] ] = transform.canonical( etrans ), edgehead
       periodic = [ d - (d>idim) for d in self.periodic if d != idim ] # TODO check that dimensions are correct for ndim > 2
       boundaries.append( StructuredTopology( belems, periodic=periodic ) if self.ndims > 1
                     else Topology( self.ndims-1, list(belems.flat) ) )
@@ -462,7 +471,8 @@ class StructuredTopology( Topology ):
         elif mask.any():
           dofmap[ ielem ] = dofs[mask]
           func = std, mask
-        funcmap[ ielem ] = (None,) * len(self.elements[ielem][:-1]) + (func,)
+        etrans, ehead = self.elements[ielem]
+        funcmap[ ielem ] = (None,) * len(etrans) + (func,)
 
     if hasnone:
       raise NotImplementedError
@@ -626,7 +636,7 @@ class RefinedTopology( Topology ):
 
   def __init__( self, basetopo ):
     self.basetopo = basetopo
-    elements = numeric.asobjvec( elem[:-1] + child for elem in basetopo for child in elem[-1].children )
+    elements = numeric.asobjvec( (etrans+(ctrans,),chead) for etrans, ehead in basetopo for ctrans, chead in ehead.children )
     elements.sort()
     Topology.__init__( self, basetopo.ndims, elements )
 

@@ -32,8 +32,7 @@ class Mosaic( Element ):
 
   @cache.property
   def simplices( self ): # merge transformations recursively
-    return [ (trans,)+simplex if len(simplex)==1
-        else (trans*simplex[0],)+simplex[1:] for trans, elem in self.children for simplex in elem.simplices ]
+    return [ (ctrans*strans,shead) for ctrans, chead in self.children for strans, shead in chead.simplices ]
 
 class Reference( Element ):
 
@@ -44,7 +43,7 @@ class Reference( Element ):
 
   @property
   def simplices( self ):
-    return (self,),
+    return [ (transform.Identity(self.ndims),self) ]
 
   def __mul__( self, other ):
     assert isinstance( other, Reference )

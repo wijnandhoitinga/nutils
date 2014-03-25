@@ -13,7 +13,8 @@ def rectilinear( vertices, periodic=(), name='rect' ):
   structure = numeric.empty( indices.shape[1:], dtype=object )
   for index in indices.reshape( ndims, -1 ).T:
     x0, x1 = numeric.array([ v[i:i+2] for v, i in zip( vertices, index ) ]).T
-    structure[tuple(index)] = root, transform.Scale(x1-x0) + x0, reference
+    trans = root, transform.Scale(x1-x0) + x0
+    structure[tuple(index)] = trans, reference
   topo = topology.StructuredTopology( structure, periodic=periodic )
   coords = function.ElemFunc( ndims )
   return topo, coords
