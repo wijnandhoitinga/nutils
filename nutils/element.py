@@ -1,5 +1,6 @@
+from __future__ import division
 from . import log, util, cache, numeric, transform, function, _
-import warnings, weakref
+import warnings, weakref, fractions
 
 
 class Element( cache.Immutable ):
@@ -7,10 +8,19 @@ class Element( cache.Immutable ):
   def __init__( self, ndims ):
     self.ndims = ndims
 
+  @property
+  def edgedict( self ):
+    return dict( self.edges )
+
+  @property
+  def childdict( self ):
+    return dict( self.children )
+
 class Mosaic( Element ):
 
-  def __init__( self, ndims, children ):
+  def __init__( self, ndims, children, parent=None ):
     self.children = children
+    self.parent   = parent
     Element.__init__( self, ndims )
 
   def pointset( self, pointset ):
@@ -25,6 +35,10 @@ class Mosaic( Element ):
       numeric.concatenate( allweights, axis=0 ) if len(allweights) == len(allpoints) else None
 
   @property
+  def edges( self ):
+    return self.parent.edges
+
+  @property
   def flipped( self ): # flip transformation as deep as possible to keep cascade intact
     children = tuple( (trans,elem.flipped) if isinstance(elem,Mosaic)
                  else (trans.flipped,elem) for trans, elem in self.children )
@@ -37,7 +51,8 @@ class Mosaic( Element ):
 class Reference( Element ):
 
   def __init__( self, vertices ):
-    self.vertices = numeric.asarray( vertices, dtype=float )
+    self.vertices = numeric.asarray( vertices )
+    assert self.vertices.dtype == int
     self.nverts, ndims = self.vertices.shape
     Element.__init__( self, ndims )
 
@@ -55,60 +70,110 @@ class Reference( Element ):
     assert isinstance( n, int ) and n >= 1
     return self if n == 1 else self * self**(n-1)
 
-  def trim( self, levelset, maxrefine=0, minrefine=0, eps=1e-10 ):
+  def trim( self, levelset, maxrefine=0, minrefine=0, eps=.01 ):
+
     assert maxrefine >= minrefine >= 0
     if minrefine == 0 and not numeric.isarray( levelset ):
       from pointset import Pointset
       vertex = Pointset( 'vertex', maxrefine )
-      levelset = levelset[-1].eval( levelset[:-1]+(self,), vertex )
+      levelset = levelset[-1].eval( (levelset[:-1],self), vertex )
+
     if maxrefine == 0: # check values
-      assert levelset.shape == (self.nverts,)
-      if numeric.greater( levelset, -eps ).all():
-        return self, None, None
-      if numeric.less( levelset, +eps ).all():
-        return None, None, self
-      coords = numeric.vstack([ self.vertices,
-        numeric.dot( self._get_intersections(levelset), self.vertices ) ])
-      pos, nul, neg = [], [], []
+
+      while True: # set almost-zero points to zero if cutoff within eps
+        assert levelset.shape == (self.nverts,)
+        if numeric.greater_equal( levelset, 0 ).all():
+          return self, None
+        if numeric.less_equal( levelset, 0 ).all():
+          return None, self
+        intersections = self._get_intersections(levelset) # intersections x vertices
+        minvert = numeric.min( intersections, axis=0 ) # vertices
+        ivert = numeric.argmin( minvert )
+        if minvert[ ivert ] < 1-eps:
+          break
+        log.debug( 'setting levelset=%f to 0' % minvert[ivert] )
+        levelset[ ivert ] = 0
+
+      isectint = ( intersections / eps ).astype( int ) # intersections x vertices
+      intersections = numeric.objmap( fractions.Fraction, isectint, isectint.sum(1)[:,_] )
+
+      # edges
+      isect2vertex = numeric.not_equal( intersections, 0 )
+      edge2isect = numeric.equal( self.edge2vertex[:,_,:], isect2vertex[_,:,:] ).all( axis=-1 )
+      edge2all = numeric.concatenate( [ self.edge2vertex, edge2isect ], axis=1 )
+      # end edges
+
+      isectcoords = ( intersections[:,:,_] * self.vertices[_,:,:] ).sum( 1 ) # TODO use numeric.dot
+      coords = numeric.vstack([ self.vertices, isectcoords ])
+
+      pos = [], []
+      neg = [], []
       simplex = Simplex( self.ndims )
       for tri in util.delaunay( coords ):
+        signs_tri = [ levelset[i] for i in tri if i < self.nverts ]
+        if numeric.greater_equal( signs_tri, 0 ).all():
+          elems, belems = pos
+        elif numeric.less_equal( signs_tri, 0 ).all():
+          elems, belems = neg
+        else:
+          raise Exception, 'domains do not separate in two convex parts'
+
         offset = coords[tri[0]]
         matrix = ( coords[tri[1:]] - offset ).T
-        if numeric.det( matrix ) < 0:
+        if numeric.det( matrix.astype(float) ) < 0:
           tri[-2:] = tri[-1], tri[-2]
           matrix = ( coords[tri[1:]] - offset ).T
         trans = transform.Linear( matrix ) + offset
-        signs_tri = [ levelset[i] for i in tri if i < self.nverts ]
-        if numeric.greater( signs_tri, -eps ).all():
-          extra = numeric.find([ i < self.nverts and levelset[i] > eps for i in tri ])
-          if len(extra) == 1:
-            iedge, = extra # all vertices except for iedge lie on the interface
-            etrans, esimplex = simplex.edges[iedge]
-            nul.append( (trans*etrans,esimplex) )
-          pos.append( (trans,simplex) )
-        elif numeric.less( signs_tri, eps ).all():
-          neg.append( (trans,simplex) )
-        else:
-          raise Exception, 'domains do not separate in two convex parts'
+        print '->', trans
+        elems.append( (trans,simplex) )
+
+        # edges
+        for myedge in numeric.find( numeric.equal( edge2all[:,tri].sum( axis=-1 ), self.ndims ) ):
+          etrans, edge = self.edges[myedge]
+          triedge, = numeric.find( ~edge2all[myedge,tri] )
+          strans, sedge = simplex.edges[triedge]
+          target = trans * strans
+          triedgeverts = tri[ edge2all[myedge,tri] ]
+          if numeric.less( triedgeverts, self.nverts ).all():
+            print 'complete'
+            # assert target == etrans
+            assert sedge == edge
+          else:
+            print 'incomplete', triedge
+            result = transform.solve( target, etrans )
+            edge = Mosaic( self.ndims-1, ((result,strans),) )
+          belems.append( (etrans,edge) )
+
+        extra = numeric.find([ i < self.nverts and levelset[i] >= 0 for i in tri ])
+        if len(extra) == 1:
+          iedge, = extra # all vertices except for iedge lie on the interface
+          etrans, esimplex = simplex.edges[iedge]
+          belems.append( (trans*etrans,esimplex) )
+
     else: # recurse
-      pos, nul, neg = [], [], []
+
+      pos, neg = [], []
       if minrefine == 0:
         nverts, subs = self._child_subsets[maxrefine-1]
         assert levelset.shape == (nverts,)
         sub = iter(subs)
       for trans, elem in self.children:
-        p, i, n = elem.trim( levelset[:-1]+(trans,)+levelset[-1:], maxrefine-1, minrefine-1 ) if minrefine \
-             else elem.trim( levelset[sub.next()], maxrefine-1, 0 )
-        if p: pos.append( (trans,p) )
-        if i: nul.append( (trans,i) )
-        if n: neg.append( (trans,n) )
+        p, n = elem.trim( levelset[:-1]+(trans,)+levelset[-1:], maxrefine-1, minrefine-1 ) if minrefine \
+          else elem.trim( levelset[sub.next()], maxrefine-1, 0 )
+        if p: pos.append((trans,p))
+        if n: neg.append((trans,n))
       if not neg:
-        assert not nul
-        return self, None, None
+        return self, None
       if not pos:
-        assert not nul
-        return None, None, self
-    return Mosaic( self.ndims, tuple(pos) ), Mosaic( self.ndims-1, tuple(nul) ), Mosaic( self.ndims, tuple(neg) )
+        return None, self
+
+      for updim, edge1 in self.edges:
+        for scale, edge2 in edge1.children:
+          scale2, updim2 = transform.prioritize( [ updim, scale ], ndims=self.ndims )
+          assert updim == updim2
+          print self.childdict[updim]
+
+    return Mosaic( self.ndims, tuple(pos[0]), tuple(pos[1]) ), Mosaic( self.ndims, tuple(neg[0]), tuple(neg[1]) )
 
 class Simplex( Reference ):
 
@@ -116,7 +181,8 @@ class Simplex( Reference ):
     'constructor'
 
     assert ndims >= 0
-    vertices = numeric.concatenate( [numeric.zeros(ndims)[_,:],numeric.eye(ndims)], axis=0 )
+    vertices = numeric.concatenate( [ numeric.zeros(ndims,dtype=int)[_,:],
+                                      numeric.eye(ndims,dtype=int) ], axis=0 )
     Reference.__init__( self, vertices )
 
     if ndims == 0: # point
@@ -128,11 +194,11 @@ class Simplex( Reference ):
       trans0 = transform.Point( +1 ) + [1]
       trans1 = transform.Point( -1 )
       self.edges = (trans0,edge), (trans1,edge)
-      scale = transform.ScaleUniform( 1, .5 )
+      scale = transform.ScaleUniform( 1, 2 )
       self.children = (scale,self), (scale+[.5],self)
       return
 
-    eye2 = numeric.vstack( [numeric.eye( ndims )]*2 ) # ndims*2 x ndims
+    eye2 = numeric.vstack( [numeric.eye( ndims, dtype=int )]*2 ) # ndims*2 x ndims
     self.edges = [( transform.Linear( (vertices[2:]-vertices[1]).T, 1 ) + vertices[1], edge )] \
       + [ ( transform.Linear( (eye2[idim:][1:ndims]).T, -1 if idim else 1 ), edge ) for idim in range( ndims ) ]
     # TODO check rule for outward pointing normals
@@ -141,8 +207,8 @@ class Simplex( Reference ):
     assert len( self.edges ) == self.ndims + 1
 
     if ndims == 2: # triangle
-      scale = transform.ScaleUniform( 2, .5 )
-      negscale = transform.ScaleUniform( 2, -.5 )
+      scale = transform.ScaleUniform( 2, 2 )
+      negscale = transform.ScaleUniform( 2, -2 )
       self.children = (
         ( scale, self ),
         ( scale + [.5, 0], self ),
@@ -155,15 +221,18 @@ class Simplex( Reference ):
 
   __repr__ = __str__
 
+  @cache.property
+  def edge2vertex( self ):
+    return ~numeric.eye( self.ndims+1, dtype=bool )
+
   def _get_intersections( self, values ):
     assert values.shape == (self.nverts,)
     if self.ndims != 1:
       raise NotImplementedError, 'only line intersections supported for now'
     v0, v1 = values
-    if v0 != v1: 
-      x = -v0 / float(v1-v0) # v0 + x (v1-v0) = 0
-      if 0 < x < 1:
-        return numeric.array([[ 1-x, x ]])
+    if v0 < 0 < v1 or v1 < 0 < v0:
+      x = -v0 / float(v1-v0) # 0 < x < 1: v0 + x (v1-v0) = 0
+      return numeric.array([[ 1-x, x ]])
     return numeric.empty(( 0, self.nverts ))
 
   @cache.propertylist
@@ -416,10 +485,19 @@ class Tensor( Reference ):
     self.simplex1 = simplex1
     self.simplex2 = simplex2
     ndims = simplex1.ndims + simplex2.ndims
-    vertices = numeric.empty(( simplex1.nverts, simplex2.nverts, ndims ))
+    vertices = numeric.empty( ( simplex1.nverts, simplex2.nverts, ndims ), dtype=int )
     vertices[:,:,:simplex1.ndims] = simplex1.vertices[:,_]
     vertices[:,:,simplex1.ndims:] = simplex2.vertices[_,:]
     Reference.__init__( self, vertices.reshape(-1,ndims) )
+
+  @cache.property
+  def edge2vertex( self ):
+    e2v1 = self.simplex1.edge2vertex
+    e2v2 = self.simplex2.edge2vertex
+    e2v = numeric.zeros( ( e2v1.shape[0]+e2v2.shape[0], e2v1.shape[1], e2v2.shape[1] ), dtype=bool )
+    e2v[:e2v2.shape[0]] = e2v2[:,:,_]
+    e2v[e2v2.shape[0]:] = e2v1[:,_,:]
+    return e2v.reshape( e2v.shape[0], -1 )
 
   def __str__( self ):
     return '%s*%s' % ( self.simplex1, self.simplex2 )

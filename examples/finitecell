@@ -45,7 +45,7 @@ def main( ndims=2, nelems=4, maxrefine=2, stress=library.Hooke(lmbda=1,mu=1) ):
 
   elasticity = function.outer( dspace.grad(geom), stress(dspace,geom) ).sum([2,3])
   matrix = domain.integrate( elasticity, geometry=geom, ischeme='gauss3' )
-  rhs = domain.boundary.integrate( -1. * dspace.dotnorm(geom), geometry=geom, ischeme='gauss3' )
+  rhs = 0#domain.boundary.integrate( -1. * dspace.dotnorm(geom), geometry=geom, ischeme='gauss3' )
   lhs = matrix.solve( rhs, constrain=cons, tol=1e-5, symmetric=True )
   disp = dspace.dot( lhs )
 
@@ -54,13 +54,13 @@ def main( ndims=2, nelems=4, maxrefine=2, stress=library.Hooke(lmbda=1,mu=1) ):
 
   if ndims == 2:
     points, colors = plotdomain.simplex.elem_eval( [ defo, stress(disp,geom)[0,1] ], ischeme='vertex2', separate=True )
-    bpoints = plotdomain.boundary.elem_eval( defo, ischeme='vertex2', separate=True )
+    bpoints = plotdomain.boundary['top'].elem_eval( defo, ischeme='vertex2', separate=True )
     xy, uv = domain.boundary.elem_eval( [ defo, defo.normal() ], ischeme='uniform1', separate=False )
     with plot.PyPlot( 'deformation' ) as plt:
       plt.mesh( points, colors, triangulate='bezier' )
       plt.colorbar()
       plt.quiver( xy[:,0], xy[:,1], uv[:,0], uv[:,1] )
-      plt.plot( bpoints[:,0], bpoints[:,1], 'b' )
+      plt.plot( bpoints[:,0], bpoints[:,1], 'r' )
 
   if ndims == 3:
     points, colors, normal = plotdomain.boundary.simplex.elem_eval( [ defo, stress(disp,geom)[0,1], defo.normal() ], ischeme='vtk', separate=True )

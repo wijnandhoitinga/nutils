@@ -802,7 +802,7 @@ class Function( ArrayFunc ):
           F = cache( std.eval, elempoints, igrad )[(Ellipsis,keep)+(slice(None),)*igrad]
         else:
           F = cache( std.eval, elempoints, igrad )
-        invmat = roottrans.inv.matrix
+        invmat = roottrans.invmatrix
         for axis in range(-igrad,0):
           F = numeric.dot( F, invmat, axis )
         fvals.append( F )
@@ -3119,12 +3119,12 @@ def iwscale( coords, ndims ):
   cndims, = coords.shape
   J = localgradient( coords, cndims )
   if cndims == ndims:
-    scale = IWeights( ndims )
+    iwscale = determinant( J ) * IWeights( ndims )
   else:
     assert cndims == ndims + 1
     normal = NWeights( cndims )
-    scale = norm2( ( J * normal ).sum() )
-  return determinant( J ) * scale
+    iwscale = norm2( ( J * normal ).sum() )
+  return iwscale
 
 
 def _unpack( funcsp ):

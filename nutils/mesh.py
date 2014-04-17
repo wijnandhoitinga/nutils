@@ -7,16 +7,32 @@ def rectilinear( vertices, periodic=(), name='rect' ):
   'rectilinear mesh'
 
   ndims = len(vertices)
-  indices = numeric.grid( len(n)-1 for n in vertices )
-  root = transform.Root( ndims, object() )
+  shape = []
+  offset = []
+  scale = []
+  for v in vertices:
+    if isinstance( v, int ):
+      assert v > 0
+      shape.append( v )
+      scale.append( 1. )
+      offset.append( 1. )
+    else:
+      assert numeric.equal( v, numeric.linspace(v[0],v[-1],len(v)) ).all()
+      shape.append( len(v)-1 )
+      scale.append( (v[-1]-v[0]) / float(len(v)-1) )
+      offset.append( v[0] )
+  if all( o == offset[0] for o in offset[1:] ):
+    offset = offset[0]
+  if all( s == scale[0] for s in scale[1:] ):
+    scale = scale[0]
+  indices = numeric.grid( shape )
   reference = element.Simplex(1)**ndims
   structure = numeric.empty( indices.shape[1:], dtype=object )
   for index in indices.reshape( ndims, -1 ).T:
-    x0, x1 = numeric.array([ v[i:i+2] for v, i in zip( vertices, index ) ]).T
-    trans = root, transform.Scale(x1-x0) + x0
+    trans = transform.Identity(ndims) + index,
     structure[tuple(index)] = trans, reference
   topo = topology.StructuredTopology( structure, periodic=periodic )
-  coords = function.ElemFunc( ndims )
+  coords = function.ElemFunc( ndims ) * scale + offset
   return topo, coords
 
 def revolve( topo, coords, nelems, degree=3, axis=0 ):

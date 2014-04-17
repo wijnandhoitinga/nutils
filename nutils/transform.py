@@ -1,284 +1,212 @@
+from __future__ import division
 from . import cache, numeric, util, _
+import fractions
 
 
-class Transformation( cache.Immutable ):
-  __slots__ = 'fromdim', 'todim', 'sign'
+def mask2nums( mask ):
+  nums = []
+  i = 0
+  while mask:
+    if mask & 1:
+      nums.append( i )
+    mask >>= 1
+    i += 1
+  return nums
 
-  def __init__( self, todim, fromdim, sign ):
-    assert todim == fromdim and sign == 0 or todim == fromdim + 1 and sign in (-1,1)
-    self.todim = todim
-    self.fromdim = fromdim
+
+class Factors( object ):
+
+  def __init__( self ):
+    self.primes = []
+    self.D = [ None, None, 0 ]
+    self.q = 1
+
+  def _next( self ):
+    self.q += 1
+    if not self.D[self.q]:
+      iprime = len(self.primes)
+      self.primes.append( self.q )
+      self.D[self.q] = 1 << iprime
+    nums = mask2nums( self.D[self.q] )
+    self.D += [0] * ( self.q + self.primes[nums[-1]] - len(self.D) + 1 )
+    for n in nums:
+      self.D[self.primes[n]+self.q] |= 1 << n
+
+  def mask2primes( self, mask ):
+    primes = []
+    for prime in self.primes:
+      if mask & 1:
+        primes.append( prime )
+      mask >>= 1
+      if not mask:
+        return primes
+    raise Exception, 'not enough primes for given mask'
+
+  def getmask( self, q ):
+    while self.q < q:
+      self._next()
+    return self.D[q]
+
+  def common( self, numbers ):
+    numbers = sorted( map( abs, numbers ) )
+    if numbers[-1] == 1:
+      return 1
+    while numbers[0] == 0:
+      numbers = numbers[1:]
+    if numbers[0] == 1:
+      return 1
+    mask = self.getmask( numbers[0] )
+    for q in numbers[1:]:
+      mask &= self.getmask(q)
+      if not mask:
+        return 1
+    return util.product( self.mask2primes(mask) )
+      
+  def __getitem__( self, q ):
+    assert isinstance( q, int ) and q > 1
+    return self.mask2primes( self.getmask(q) )
+    
+
+factors = Factors()
+
+#print '2', factors[2]
+#print '3', factors[3]
+#print '4', factors[4]
+#print '5', factors[5]
+#print '6', factors[6]
+#print '7', factors[7]
+#print '8', factors[8]
+
+
+def Root( ndims ):
+  return Identity( ndims )
+
+
+def Identity( ndims ):
+  return AffineTrans( numeric.array(1), numeric.zeros(ndims,dtype=int), 1, 0 )
+
+
+def Point( sign ):
+  return AffineTrans( numeric.zeros([1,0],dtype=int), numeric.zeros(1,dtype=int), 1, sign )
+
+
+def ScaleUniform( ndims, invfactor ):
+  assert isinstance( invfactor, int )
+  return AffineTrans( numeric.array(1), numeric.zeros(ndims,dtype=int), invfactor, 0 )
+
+
+def Scale( factors ):
+  prec = 2310 # 2 * 3 * 5 * 7 * 11
+  f = numeric.round( numeric.asarray(factors) * prec )
+  return affinetrans( f, numeric.zeros(len(f),dtype=int), prec, 0 )
+
+
+def affinetrans( linear, shift, numer, sign ):
+  assert numer > 0
+  nums = numeric.empty( linear.size + shift.size + 1, dtype=int )
+  nums[:linear.size] = linear.flat
+  nums[linear.size:-1] = shift
+  nums[-1] = numer
+  common = factors.common( nums )
+  while common != 1:
+    nums //= common
+    common = factors.common( nums )
+  return AffineTrans( nums[:linear.size].reshape(linear.shape), nums[linear.size:-1], nums[-1], sign )
+  
+
+class AffineTrans( cache.Immutable ):
+  __slots__ = 'linear', 'shift', 'numer', 'sign', 'todim', 'fromdim'
+
+  def __init__( self, linear, shift, numer, sign ):
+    if linear.ndim == 0:
+      self.todim, = self.fromdim, = shift.shape
+    elif linear.ndim == 1:
+      self.todim, = self.fromdim, = linear.shape
+      assert shift.shape == (self.todim,)
+    elif linear.ndim == 2:
+      self.todim, self.fromdim = linear.shape
+      assert shift.shape == (self.todim,)
+    else:
+      raise Exception, 'invalid linear operator with shape %s' % (linear.shape,)
+    assert isinstance( numer, int ) and numer >= 1
+    assert self.todim == self.fromdim and sign == 0 or self.todim == self.fromdim + 1 and sign in (-1,1)
+    assert linear.dtype == int
+    assert shift.dtype == int
+    self.linear = linear
+    self.shift = shift
+    self.numer = numer
     self.sign = sign
 
-  def __add__( self, offset ):
-    offset = numeric.array( offset, float )
-    assert offset.shape == (self.todim,)
-    if numeric.equal( offset, 0 ).all():
-      return self
-    return Affine( offset, self )
-
-  def __sub__( self, offset ):
-    offset = numeric.asarray( offset, float )
-    return self + (-offset)
-
-  def __mul__( self, other ):
-    return NotImplemented
-
-  def __rmul__( self, other ):
-    return NotImplemented
-
-  def __repr__( self ):
-    return '%s[%d<-%d](%s)' % ( self.__class__.__name__, self.todim, self.fromdim, self )
-
-
-class Affine( Transformation ):
-  __slots__ = 'offset', 'transform'
-
-  def __init__( self, offset, transform ):
-    Transformation.__init__( self, transform.todim, transform.fromdim, transform.sign )
-    assert offset.shape == (self.todim,)
-    self.offset = offset
-    self.transform = transform
-
-  @property
-  def flipped( self ):
-    return Affine( self.offset, self.transform.flipped )
-
   def apply( self, points, axis=-1 ):
-    return self.offset + self.transform.apply( points, axis )
-
-  def __add__( self, offset ):
-    return self.transform + (self.offset+offset)
-
-  def __mul__( self, other ):
-    assert self.fromdim == other.todim
-    if isinstance( other, Affine ):
-      # self o other = self.offset + self.transform o ( other.offset + other.transform )
-      return self.transform * other.transform + ( self.offset + self.transform.apply( other.offset ) )
-    return self.transform * other + self.offset
-
-  def __rmul__( self, other ):
-    assert other.fromdim == self.todim
-    # other o self = other o ( self.offset + self.transform )
-    return other * self.transform + other.apply( self.offset )
-
-  @property
-  def det( self ):
-    return self.transform.det
-
-  @property
-  def inv( self ):
-    # y = self.offset + self.transform x <=> self.transform.inv y = self.tranform.inv self.offset + x
-    inv = self.transform.inv
-    return inv - inv.apply( self.offset )
+    assert axis==-1 # for now
+    assert points.shape[axis] == self.fromdim
+    return ( numeric.dot( points, self.linear.T, axis ) + self.shift if self.linear.ndim == 2
+                              else points * self.linear + self.shift ) / float(self.numer)
 
   @property
   def matrix( self ):
-    return self.transform.matrix
+    scaled = self.linear / float(self.numer)
+    return scaled if scaled.ndim == 2 \
+      else numeric.diag( scaled ) if scaled.ndim == 1 \
+      else numeric.eye( self.fromdim ) * scaled
+
+  @property
+  def offset( self ):
+    return self.shift / float(self.numer)
+
+  @property
+  def invmatrix( self ):
+    return numeric.inv( self.matrix )
+
+  @property
+  def intdet( self ): # divide by numer to get det
+    return numeric.exterior( self.linear ) * self.sign if self.fromdim != self.todim \
+      else numeric.det( self.linear ) if self.linear.ndim == 2 \
+      else numeric.product( self.linear ) if self.linear.ndim == 1 \
+      else self.linear**self.todim
+
+  @property
+  def det( self ):
+    return self.intdet / float(self.numer)
+
+  @property
+  def squaremat( self ):
+    return self.linear if self.fromdim == self.todim \
+      else numeric.concatenate( [ self.linear, self.intdet[:,_] ], axis=1 )
+
+  @property
+  def invsquaremat( self ):
+    if self.todim == 2:
+      (a11,a12),(a21,a22) = self.squaremat
+      A = numeric.array( ((a22,-a12),(-a21,a11)) ) * self.numer
+      numer = a11 * a22 - a12 * a21
+    else:
+      raise NotImplementedError
+    if numer < 0:
+      numer = -numer
+      A = -A
+    return A, numer
+    
+  def __add__( self, shift ):
+    scaled = numeric.asarray( shift ) * self.numer
+    scaledint = numeric.round( scaled )
+    assert numeric.equal( scaled, scaledint ).all()
+    return affinetrans( self.linear, self.shift + scaledint, self.numer, self.sign )
+
+  def __mul__( self, other ):
+    linear = numeric.dot( self.linear, other.linear ) if self.linear.ndim == other.linear.ndim == 2 \
+        else ( self.linear.T * other.linear.T ).T
+    shift = ( numeric.dot( self.linear, other.shift ) if self.linear.ndim == 2
+          else self.linear * other.shift ) + other.numer * self.shift
+    numer = self.numer * other.numer
+    return affinetrans( linear, shift, numer, self.sign or other.sign )
+
+  def __str__( self ):
+    return ( '%s+%sx/%s' % ( self.shift.tolist(), self.linear.tolist(), self.numer ) ).replace( ' ', '' )
 
   def __repr__( self ):
-    return '%s[%d<-%d](%s)' % ( self.transform.__class__.__name__, self.todim, self.fromdim, self )
-
-  def __str__( self ):
-    return '[%s] + %s' % ( ','.join( '%.2f'%v for v in self.offset ), self.transform )
-
-
-class Linear( Transformation ):
-  __slots__ = 'matrix',
-
-  def __init__( self, matrix, sign=0 ):
-    Transformation.__init__( self, matrix.shape[0], matrix.shape[1], sign )
-    self.matrix = matrix
-
-  def apply( self, points, axis=-1 ):
-    assert points.shape[-1] == self.fromdim
-    return numeric.dot( points, self.matrix.T, axis=axis )
-
-  def __mul__( self, other ):
-    assert self.fromdim == other.todim
-    return Linear( numeric.dot( self.matrix, other.matrix ), self.sign + other.sign ) if isinstance( other, Linear ) \
-      else Transformation.__mul__( self, other )
-
-  @property
-  def flipped( self ):
-    return Linear( self.matrix, -self.sign )
-
-  @property
-  def det( self ):
-    return numeric.det( self.matrix ) if self.fromdim == self.todim \
-      else numeric.exterior( self.matrix ) * self.sign
-
-  @property
-  def inv( self ):
-    assert self.fromdim == self.todim
-    invmatrix = numeric.inv( self.matrix )
-    return Linear( invmatrix )
-
-  def __str__( self ):
-    return ' + '.join( '[%s] x%d' % ( ','.join( '%.2f'%v for v in self.matrix[:,i] ), i ) for i in range(self.fromdim) )
-
-
-class Slice( Linear ):
-  __slots__ = 'slice',
-
-  def __init__( self, fromdim, start, stop, step=1 ):
-    self.slice = slice( start, stop, step )
-    todim = len(range(start,stop,step))
-    matrix = numeric.zeros( [todim,fromdim] )
-    numeric.takediag( matrix[:,self.slice] )[:] = 1
-    Linear.__init__( self, matrix )
-
-  def apply( self, points, axis=-1 ):
-    assert points.shape[-1] == self.fromdim
-    return numeric.getitem( points, axis, self.slice )
-
-  @staticmethod
-  def nestslices( s1, s2 ):
-    idx = range( s2.start, s2.stop, s2.step )[ s1 ]
-    return idx[0], idx[-1] + ( 1 if idx[1] > idx[0] else -1 ), idx[1] - idx[0]
-
-  def __mul__( self, other ):
-    assert self.fromdim == other.todim
-    return Slice( other.fromdim, *self.nestslices(self.slice,other.slice) ) if isinstance( other, Slice ) \
-      else Scale( other.factors[self.slice] ) if isinstance( other, Scale ) \
-      else Linear( other.matrix[self.slice] ) if isinstance( other, Linear ) \
-      else Linear.__mul__( self, other )
-
-  def __rmul__( self, other ):
-    assert other.fromdim == self.todim
-    return other * Linear( self.matrix ) # TODO make more efficient
-      
-  @property
-  def det( self ):
-    assert self.fromdim == self.todim
-    return 1.
-
-  @property
-  def inv( self ):
-    assert self.fromdim == self.todim
-    return self
-
-  def __str__( self ):
-    return 'x[%d:%d:%d]' % ( self.slice.start, self.slice.stop, self.slice.step )
-
-
-class Scale( Linear ):
-  __slots__ = 'factors',
-
-  def __init__( self, factors ):
-    assert factors.ndim == 1
-    self.factors = factors
-    matrix = numeric.zeros( [factors.size,factors.size] )
-    numeric.takediag(matrix)[:] = factors
-    Linear.__init__( self, matrix )
-
-  def apply( self, points, axis=-1 ):
-    assert points.shape[axis] == self.fromdim
-    assert axis == -1
-    return points * self.factors
-
-  def __mul__( self, other ):
-    assert self.fromdim == other.todim
-    return Scale( self.factors * other.factors ) if isinstance( other, Scale ) \
-      else Linear( self.factors[:,_] * other.matrix, other.sign ) if isinstance( other, Linear ) \
-      else Linear.__mul__( self, other )
-
-  def __rmul__( self, other ):
-    assert other.fromdim == self.todim
-    return Linear( self.factors * other.matrix, other.sign ) if isinstance( other, Linear ) \
-      else Linear.__rmul__( self, other )
-
-  @property
-  def det( self ):
-    return numeric.prod( self.factors )
-
-  @property
-  def inv( self ):
-    return Scale( numeric.reciprocal( self.factors ) )
-
-  def __str__( self ):
-    return '[%s] x' % ','.join( '%.2f' % v for v in self.factors )
-
-
-class ScaleUniform( Scale ):
-  __slots__ = 'factor',
-
-  def __init__( self, ndims, factor ):
-    self.factor = factor
-    Scale.__init__( self, numeric.appendaxes( factor, ndims ) )
-
-  def __mul__( self, other ):
-    assert self.fromdim == other.todim
-    return ScaleUniform( self.todim, self.factor * other.factor ) if isinstance( other, ScaleUniform ) \
-      else Scale.__mul__( self, other )
-
-  def apply( self, points, axis=-1 ):
-    assert points.shape[axis] == self.fromdim
-    return points * self.factor
-
-  @property
-  def det( self ):
-    return self.factor**self.todim
-
-  @property
-  def inv( self ):
-    return ScaleUniform( self.todim, 1./self.factor )
-
-  def __str__( self ):
-    return '%s x' % self.factor
-
-
-class Identity( ScaleUniform ):
-  __slots__ = ()
-
-  def __init__( self, ndims ):
-    ScaleUniform.__init__( self, ndims, 1. )
-
-  def apply( self, points, axis=-1 ):
-    return points
-
-  def __mul__( self, other ):
-    assert self.fromdim == other.todim
-    return other
-
-  def __rmul__( self, other ):
-    assert other.fromdim == self.todim
-    return other
-
-  @property
-  def det( self ):
-    return 1.
-
-  @property
-  def inv( self ):
-    return self
-
-  def __str__( self ):
-    return 'x'
-
-
-class Root( Identity ):
-  __slots__ = ()
-
-  def __init__( self, ndims, token ):
-    Identity.__init__( self, ndims )
-
-
-class Point( Linear ):
-  __slots__ = ()
-
-  def __init__( self, sign ):
-    Linear.__init__( self, numeric.zeros([1,0]), sign )
-
-  def apply( self, points, axis=-1 ):
-    shape = list( points.shape )
-    assert shape[axis] == 0
-    shape[axis] = 1
-    return numeric.zeros( shape )
-
-  def __str__( self ):
-    return '0'
-
+    return 'AffineTrans(%s)' % self
+    
 
 ## UTILITY FUNCTIONS
 
@@ -286,41 +214,35 @@ class Point( Linear ):
 def tensor( trans1, trans2 ):
   fromdim = trans1.fromdim + trans2.fromdim
   todim = trans1.todim + trans2.todim
-  offset = numeric.zeros( todim )
-  if isinstance( trans1, Affine ):
-    offset[:trans1.todim] = trans1.offset
-    trans1 = trans1.transform
-  if isinstance( trans2, Affine ):
-    offset[trans1.todim:] = trans2.offset
-    trans2 = trans2.transform
-  if isinstance( trans1, Identity ) and isinstance( trans2, Identity ):
-    linear = Identidy( todim )
-  elif isinstance( trans1, ScaleUniform ) and isinstance( trans2, ScaleUniform ) and trans1.factor == trans2.factor:
-    linear = ScaleUniform( trans1.fromdim + trans2.fromdim, trans1.factor )
-  elif isinstance( trans1, Scale ) and isinstance( trans2, Scale ):
-    linear = Scale( numeric.concatenate([ trans1.factors, trans2.factors ]) )
+
+  numer = trans1.numer * trans2.numer
+
+  shift = numeric.zeros( todim, dtype=int )
+  shift[:trans1.todim] = trans1.shift * trans2.numer
+  shift[trans1.todim:] = trans2.shift * trans1.numer
+
+  matrix = numeric.zeros( [todim,fromdim], dtype=int )
+  matrix[:trans1.todim,:trans1.fromdim] = trans1.matrix * trans2.numer
+  matrix[trans1.todim:,trans1.fromdim:] = trans2.matrix * trans1.numer
+
+  # TODO generalize
+  if trans1.todim == 1 and trans1.fromdim == 0 and trans2.todim == trans2.fromdim == 1:
+    sign = -trans1.sign
+  elif trans1.todim == trans1.fromdim == 1 and trans2.todim == 1 and trans2.fromdim == 0:
+    sign = trans2.sign
+  elif trans1.todim == 1 and trans1.fromdim == 0 and trans2.todim == trans2.fromdim == 2:
+    sign = trans1.sign
+  elif trans1.todim == trans1.fromdim == 1 and trans2.todim == 2 and trans2.fromdim == 1:
+    sign = trans2.sign
   else:
-    matrix = numeric.zeros( [todim,fromdim] )
-    matrix[:trans1.todim,:trans1.fromdim] = trans1.matrix
-    matrix[trans1.todim:,trans1.fromdim:] = trans2.matrix
-    # TODO generalize
-    if trans1.todim == 1 and trans1.fromdim == 0 and trans2.todim == trans2.fromdim == 1:
-      sign = -trans1.sign
-    elif trans1.todim == trans1.fromdim == 1 and trans2.todim == 1 and trans2.fromdim == 0:
-      sign = trans2.sign
-    elif trans1.todim == 1 and trans1.fromdim == 0 and trans2.todim == trans2.fromdim == 2:
-      sign = trans1.sign
-    elif trans1.todim == trans1.fromdim == 1 and trans2.todim == 2 and trans2.fromdim == 1:
-      sign = trans2.sign
-    else:
-      raise NotImplementedError
-    linear = Linear( matrix, sign )
-  return linear + offset
+    raise NotImplementedError
+
+  return affinetrans( matrix, shift, numer, sign )
 
 def split_linear_offset( trans ):
   if isinstance( trans, Affine ):
-    return trans.transform, trans.offset
-  return trans, numeric.zeros( trans.todim )
+    return trans.transform, trans.shift
+  return trans, numeric.zeros( trans.todim, dtype=int )
 
 def canonical( trans ):
   # keep at lowest ndims possible
@@ -329,19 +251,18 @@ def canonical( trans ):
       break
     while i < len(trans):
       scale, updim = trans[i-1:i+1]
-      if isinstance( scale, Root ) or updim.todim != updim.fromdim + 1:
+      if updim.todim != updim.fromdim + 1 or scale.linear.ndim != 0:
         break
-      _scale, c = split_linear_offset(scale)
-      if not isinstance( _scale, ScaleUniform ):
+      Ainv, Ainv_numer = updim.invsquaremat
+      x = numeric.dot( Ainv, scale.shift * updim.numer + scale.linear * updim.shift )
+      offset_scale = x[:-1]
+      offset_updim = x[-1] * updim.intdet
+      newscale = affinetrans( scale.linear, offset_scale, scale.numer * Ainv_numer, scale.sign )
+      newupdim = affinetrans( updim.linear, offset_updim, updim.numer * Ainv_numer, updim.sign )
+      if newupdim != updim:
         break
-      _updim, b = split_linear_offset(updim)
-      A = _updim.matrix
-      AA = numeric.dot( A.T, A )
-      Av = numeric.dot( A.T, c + (_scale.factor-1) * b )
-      d = numeric.solve( AA, Av )
-      newscale = ScaleUniform( updim.fromdim, _scale.factor ) + d
-      assert updim * newscale == scale * updim
-      trans = trans[:i-1] + (updim,newscale) + trans[i+1:]
+      assert newupdim * newscale == scale * updim
+      trans = trans[:i-1] + (newupdim,newscale) + trans[i+1:]
       i += 1
   return trans
 
@@ -349,16 +270,34 @@ def prioritize( trans, ndims ):
   # assuming canonical, move up to ndims asap, stay at ndims alap
   for i in range(1,len(trans)):
     while i and trans[i].todim < ndims:
-      scale, updim = trans[i-1:i+1]
-      if updim.todim != updim.fromdim + 1:
+      updim, scale = trans[i-1:i+1]
+      if updim.todim != updim.fromdim + 1 or scale.linear.ndim != 0:
         break
-      _scale, d = split_linear_offset(scale)
-      if not isinstance( _scale, ScaleUniform ):
-        break
-      _updim, b = split_linear_offset(updim)
-      c = _updim.apply( d ) + (1-_scale.factor) * b
-      newscale = ScaleUniform( updim.todim, _scale.factor ) + c
+      c = numeric.dot( updim.linear, scale.offset ) + updim.offset * scale.numer - scale.linear * updim.offset
+      newscale = affinetrans( scale.linear * updim.numer, c, updim.numer * scale.numer, scale.sign )
       assert newscale * updim == updim * scale
       trans = trans[:i-1] + (newscale,updim) + trans[i+1:]
       i -= 1
   return trans
+
+def solve( target, trans ):
+  # find trans * result == target, assuming possible
+  fromdim = target.fromdim
+  todim = target.todim
+  assert todim == fromdim + 1
+  assert fromdim == trans.fromdim
+  assert todim == trans.todim
+  E, e = split_linear_offset( target )
+  D, d = split_linear_offset( trans )
+  Dmat = D.matrix
+  DD = numeric.dot( Dmat.T, Dmat )
+  print 'DD', DD
+  DDD = numeric.solve( DD, Dmat.T )
+  print 'DDD', DDD
+  C = numeric.dot( DDD, E.matrix )
+  c = numeric.dot( DDD, e-d )
+  result = Linear( C ) + c
+  print '1.', trans, ',', result
+  print '2.', target
+  assert trans * result == target
+  return result

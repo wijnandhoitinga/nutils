@@ -133,6 +133,10 @@ class Topology( object ):
 
     return retvals
 
+  def refine( self, n ):
+    'refine entire topology n times'
+    return self if n <= 0 else self.refined.refine( n-1 )
+
   def projection( self, fun, onto, geometry, **kwargs ):
     'project and return as function'
 
@@ -290,30 +294,17 @@ class Topology( object ):
     'trim element along levelset'
 
     levelset = function.ascompiled( levelset )
-    pos = numeric.zeros_like( self.elements )
-    neg = numeric.zeros_like( self.elements )
-    nul = []
+    pos = []
+    neg = []
     __logger__ = log.enumerate( 'elem', self )
-    for ielem, elem in __logger__:
-      p, i, n = elem[-1].trim( levelset=(elem[:-1]+(levelset,)), maxrefine=maxrefine, minrefine=minrefine )
-      if p: pos[ielem] = elem[:-1] + (p,)
-      if i: nul.append( elem[:-1] + (i,) )
-      if n: neg[ielem] = elem[:-1] + (n,)
-    posgroups, neggroups = {}, {}
-    for key, groupelems in self.groups.items():
-      ind = self.index( groupelems )
-      posgroups[key] = Topology( ndims=self.ndims, elements=filter(None,pos[ind]) )
-      neggroups[key] = Topology( ndims=self.ndims, elements=filter(None,neg[ind]) )
-    if self.boundary:
-      posboundary, negboundary = self.boundary.trim( levelset, maxrefine, minrefine )
-      posboundary = posboundary.new_with_group( 'trim',
-        UnstructuredTopology( ndims=self.ndims-1, elements=nul ) )
-      negboundary = negboundary.new_with_group( 'trim',
-        UnstructuredTopology( ndims=self.ndims-1, elements=[ elem[:-1]+(elem[-1].flipped,) for elem in nul ] ) )
-    else:
-      posboundary = negboundary = None
-    postopo = UnstructuredTopology( ndims=self.ndims, elements=filter(None,pos), groups=posgroups, boundary=posboundary )
-    negtopo = UnstructuredTopology( ndims=self.ndims, elements=filter(None,neg), groups=neggroups, boundary=negboundary )
+    for ielem, (trans,head) in __logger__:
+      p, n = head.trim( levelset=(trans+(levelset,)), maxrefine=maxrefine, minrefine=minrefine )
+      if p: pos.append(( trans,p ))
+      if n: neg.append(( trans,n ))
+    # pos, nul, neg are sorted
+    postopo = TrimmedTopology( self, elements=pos, iface=nul )
+    negtopo = TrimmedTopology( self, elements=neg, iface=invnul )
+    raise NotImplementedError
     return postopo, negtopo
 
   @cache.property
@@ -353,13 +344,6 @@ class UnstructuredTopology( Topology ):
       assert isinstance( boundary, Topology ) and boundary.ndims == ndims-1
     self.boundary = boundary
 
-  def new_with_group( self, key, topo ):
-    assert isinstance( topo, Topology ) and topo.ndims == self.ndims
-    elements = numeric.union1d( self.elements, topo.elements )
-    groups = self.groups.copy()
-    groups[key] = topo
-    return UnstructuredTopology( self.ndims, elements, groups=groups )
-
   def __getitem__( self, item ):
     if isinstance( item, str ):
       return eval( item.replace(',','|'), self.groups )
@@ -368,12 +352,25 @@ class UnstructuredTopology( Topology ):
 class StructuredTopology( Topology ):
 
   def __init__( self, structure, periodic=() ):
-    indices = numeric.argsort( structure, axis=None )
+    nNone = numeric.equal(structure,None).sum()
+    indices = structure.argsort(axis=None)
+    assert numeric.equal( structure.flat[indices[:nNone]], None ).all()
     self.istructure = numeric.empty( structure.shape, dtype=int )
-    self.istructure.flat[indices] = numeric.arange( len(indices) )
+    self.istructure.flat[indices] = numeric.maximum( numeric.arange( len(indices) )-nNone, -1 )
     self.periodic = tuple(periodic)
     self.groups = {}
-    Topology.__init__( self, ndims=structure.ndim, elements=structure.flat[indices] )
+    Topology.__init__( self, ndims=structure.ndim, elements=structure.flat[indices[nNone:]] )
+    assert numeric.equal( structure, self.structure ).all() # TODO fix '=='
+
+  @property
+  def structure( self ):
+    return self.structure_like( self.elements )
+
+  def structure_like( self, elements ): 
+    structure = numeric.empty( self.istructure.shape, dtype=object )
+    select = numeric.greater_equal( self.istructure.flat, 0 )
+    structure.flat[select] = elements[self.istructure.flat[select]]
+    return structure
 
   @cache.property
   def boundary( self ):
@@ -389,10 +386,11 @@ class StructuredTopology( Topology ):
       ielems = numeric.getitem( self.istructure[...,_], axis=idim, item=iside ) # add axis to keep an array even if ndims=1
       belems = numeric.empty( ielems.shape[:-1], dtype=object )
       for index, ielem in numeric.enumerate_nd( ielems ):
-        etrans, ehead = self.elements[ielem]
-        edgetrans, edgehead = ehead.edges[iedge]
-        etrans += edgetrans,
-        belems[ index[:-1] ] = transform.canonical( etrans ), edgehead
+        if ielem >= 0:
+          etrans, ehead = self.elements[ielem]
+          edgetrans, edgehead = ehead.edges[iedge]
+          etrans += edgetrans,
+          belems[ index[:-1] ] = transform.canonical( etrans ), edgehead
       periodic = [ d - (d>idim) for d in self.periodic if d != idim ] # TODO check that dimensions are correct for ndim > 2
       boundaries.append( StructuredTopology( belems, periodic=periodic ) if self.ndims > 1
                     else Topology( self.ndims-1, list(belems.flat) ) )
@@ -458,10 +456,11 @@ class StructuredTopology( Topology ):
     hasnone = False
     for item in numeric.broadcast( self.istructure, stdelems, *numeric.ix_(*slices) ):
       ielem = item[0]
-      std = item[1]
       if ielem < 0:
         hasnone = True
-      else:
+      else:  
+        elem = self.elements[ ielem ][:-1]
+        std = item[1]
         S = item[2:]
         dofs = vertex_structure[S].ravel()
         mask = numeric.greater_equal( dofs, 0 )
@@ -537,10 +536,15 @@ class StructuredTopology( Topology ):
   def refined( self ):
     'refine entire topology'
 
+    transforms = tuple( trans for trans, head in ( element.Simplex(1)**self.ndims ).children )
+
     structure = numeric.empty( self.istructure.shape + (2**self.ndims,), dtype=object )
     for index, ielem in numeric.enumerate_nd( self.istructure ):
-      elem = self.elements[ielem]
-      structure[index] = [ elem[:-1] + child for child in elem[-1].children ]
+      if ielem >= 0:
+        trans, head = self.elements[ielem]
+        for ctrans, chead in head.children:
+          cindex = transforms.index( ctrans )
+          structure[index][cindex] = trans+(ctrans,), chead
     structure = structure.reshape( self.istructure.shape + (2,)*self.ndims )
     structure = structure.transpose( sum( [ ( i, self.ndims+i ) for i in range(self.ndims) ], () ) )
     structure = structure.reshape([ sh * 2 for sh in self.istructure.shape ])
@@ -640,14 +644,60 @@ class RefinedTopology( Topology ):
     elements.sort()
     Topology.__init__( self, basetopo.ndims, elements )
 
-  @property
-  def groups( self ):
-    return { key: topo.refined() for key, topo in self.basetopo.groups.items() }
+  def __getitem__( self, key ):
+    return self.basetopo[key].refined
 
   @property
   def boundary( self ):
     return self.basetopo.boundary.refined
     
+class TrimmedTopology( Topology ):
+  'trimmed'
+
+  def __init__( self, basetopo, elements, iface=None ):
+    self.basetopo = basetopo
+    self.iface = iface
+    Topology.__init__( self, basetopo.ndims, elements )
+
+  @property
+  def boundary( self ):
+    belems = []#list( self.iface )
+    for trans, head in self.basetopo.boundary:
+      index = numeric.bisect( self.elements_nohead, trans[:-1] )
+      if index < 0:
+        continue
+      ptrans, phead = self.elements[ index ]
+      if ptrans != trans[:-1]:
+        continue
+      ehead = phead.edgedict.get( trans[-1] )
+      if ehead is None:
+        continue
+      belems.append( (trans,ehead) )
+    belems.sort()
+    return TrimmedTopology( self.basetopo.boundary, belems )
+
+  def __getitem__( self, key ):
+    if key == 'trim':
+      # all elements in self that are not in basetopo
+      indices = numeric.bisect_sorted( self.elements_nohead, self.basetopo.elements_nohead, matching=True )
+      select = numeric.ones( len(self), dtype=bool )
+      select[indices] = False
+      assert select.any(), 'no trimmed elements found in trim group'
+      return Topology( self.ndims, self.elements[select] )
+    else:
+      # all elements in basetopo[key] that are also in self
+      keytopo = self.basetopo[ key ]
+      indices = numeric.bisect_sorted( self.elements_nohead, keytopo.elements_nohead, matching=True )
+      elements = self.elements[indices]
+      if numeric.equal( elements, keytopo.elements ).all():
+        return keytopo
+      assert elements, 'no trimmed elements found in %s group' % key
+      return TrimmedTopology( keytopo, elements )
+
+  def splinefunc( self, *args, **kwargs ):
+    return self.basetopo.splinefunc( *args, **kwargs )
+
+  
 
 
 ## OLD
