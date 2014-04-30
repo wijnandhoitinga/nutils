@@ -1712,7 +1712,7 @@ class ElemFunc( ArrayFunc ):
   def _localgradient( self, ndims ):
     if ndims == self.roottrans.todim:
       return eye( ndims )
-    assert self.ndims > ndims
+    assert self.roottrans.todim > ndims
     raise NotImplementedError
     return Transform( self, Cascade(ndims,self.side) )
 
@@ -3119,12 +3119,12 @@ def iwscale( coords, ndims ):
   cndims, = coords.shape
   J = localgradient( coords, cndims )
   if cndims == ndims:
-    iwscale = determinant( J ) * IWeights( ndims )
+    iwscale = IWeights( ndims )
   else:
     assert cndims == ndims + 1
-    normal = NWeights( cndims )
-    iwscale = norm2( ( J * normal ).sum() )
-  return iwscale
+    normal = ( inverse( J.T ) * NWeights(cndims) ).sum()
+    iwscale = norm2( normal )
+  return determinant( J ) * iwscale
 
 
 def _unpack( funcsp ):
