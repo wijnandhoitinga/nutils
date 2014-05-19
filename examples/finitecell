@@ -54,7 +54,7 @@ def main( ndims=2, nelems=4, maxrefine=2, stress=library.Hooke(lmbda=1,mu=1) ):
 
   if ndims == 2:
     points, colors = plotdomain.simplex.elem_eval( [ defo, stress(disp,geom)[0,1] ], ischeme='vertex2', separate=True )
-    bpoints = plotdomain.boundary['top'].elem_eval( defo, ischeme='vertex2', separate=True )
+    bpoints = plotdomain.boundary['trim'].elem_eval( defo, ischeme='vertex2', separate=True )
     xy, uv = domain.boundary.elem_eval( [ defo, defo.normal() ], ischeme='uniform1', separate=False )
     with plot.PyPlot( 'deformation' ) as plt:
       plt.mesh( points, colors, triangulate='bezier' )

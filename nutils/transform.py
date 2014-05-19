@@ -92,7 +92,8 @@ def Point( sign ):
 
 def ScaleUniform( ndims, invfactor ):
   assert isinstance( invfactor, int )
-  return AffineTrans( numeric.array(1), numeric.zeros(ndims,dtype=int), invfactor, 0 )
+  return AffineTrans( numeric.array(1 if invfactor > 0 else -1),
+    numeric.zeros(ndims,dtype=int), abs(invfactor), 0 )
 
 
 def Scale( factors ):
@@ -103,6 +104,8 @@ def Scale( factors ):
 
 def affinetrans( linear, shift, numer, sign ):
   assert numer > 0
+  assert linear.dtype == int
+  assert shift.dtype == int
   nums = numeric.empty( linear.size + shift.size + 1, dtype=int )
   nums[:linear.size] = linear.flat
   nums[linear.size:-1] = shift
@@ -159,15 +162,18 @@ class AffineTrans( cache.Immutable ):
     return numeric.inv( self.matrix )
 
   @property
-  def intdet( self ): # divide by numer to get det
-    return numeric.exterior( self.linear ) * self.sign if self.fromdim != self.todim \
-      else numeric.det( self.linear ) if self.linear.ndim == 2 \
-      else numeric.product( self.linear ) if self.linear.ndim == 1 \
-      else self.linear**self.todim
+  def intdet( self ): # divide by numer**todim to get det
+    intdet = numeric.exterior( self.linear ) * self.sign if self.fromdim != self.todim \
+        else numeric.det( self.linear ) if self.linear.ndim == 2 \
+        else numeric.product( self.linear ) if self.linear.ndim == 1 \
+        else self.linear**self.todim
+    assert isinstance( intdet, int ) \
+        or isinstance( intdet, numeric.ndarray ) and intdet.dtype == int
+    return intdet
 
   @property
   def det( self ):
-    return self.intdet / float(self.numer)
+    return self.intdet / float(self.numer**self.fromdim)
 
   @property
   def squaremat( self ):
@@ -176,12 +182,22 @@ class AffineTrans( cache.Immutable ):
 
   @property
   def invsquaremat( self ):
-    if self.todim == 2:
-      (a11,a12),(a21,a22) = self.squaremat
-      A = numeric.array( ((a22,-a12),(-a21,a11)) ) * self.numer
-      numer = a11 * a22 - a12 * a21
+    if self.todim == 1:
+      A = numeric.reshape( self.numer, (1,1) )
+    elif self.todim == 2:
+      (a,b),(c,d) = self.squaremat
+      A = numeric.array(
+        ((d,-b),
+         (-c,a)) ) * self.numer
+    elif self.todim == 3:
+      (a,b,c),(d,e,f),(g,h,i) = self.squaremat
+      A = numeric.array(
+        ((e*i-f*h,c*h-b*i,b*f-c*e),
+         (f*g-d*i,a*i-c*g,c*d-a*f),
+         (d*h-e*g,b*g-a*h,a*e-b*d)) ) * self.numer
     else:
       raise NotImplementedError
+    numer = numeric.det( self.squaremat )
     if numer < 0:
       numer = -numer
       A = -A
@@ -199,10 +215,13 @@ class AffineTrans( cache.Immutable ):
     shift = ( numeric.dot( self.linear, other.shift ) if self.linear.ndim == 2
           else self.linear * other.shift ) + other.numer * self.shift
     numer = self.numer * other.numer
-    return affinetrans( linear, shift, numer, self.sign or other.sign )
+    sign = ( self.sign if other.intdet > 0 else -self.sign ) if self.sign \
+      else ( other.sign if self.intdet > 0 else -other.sign ) if other.sign \
+      else 0
+    return affinetrans( linear, shift, numer, sign )
 
   def __str__( self ):
-    return ( '%s+%sx/%s' % ( self.shift.tolist(), self.linear.tolist(), self.numer ) ).replace( ' ', '' )
+    return ( '%s+%sx/%s%s' % ( self.shift.tolist(), self.linear.tolist(), self.numer, ['-','','+'][self.sign+1] ) ).replace( ' ', '' )
 
   def __repr__( self ):
     return 'AffineTrans(%s)' % self
@@ -221,12 +240,21 @@ def tensor( trans1, trans2 ):
   shift[:trans1.todim] = trans1.shift * trans2.numer
   shift[trans1.todim:] = trans2.shift * trans1.numer
 
-  matrix = numeric.zeros( [todim,fromdim], dtype=int )
-  matrix[:trans1.todim,:trans1.fromdim] = trans1.matrix * trans2.numer
-  matrix[trans1.todim:,trans1.fromdim:] = trans2.matrix * trans1.numer
+  if trans1.linear.ndim == trans2.linear.ndim == 0 and trans1.numer == trans2.numer and trans1.linear == trans2.linear:
+    linear = trans1.linear * trans1.numer
+  elif trans1.linear.ndim <= 1 and trans2.linear.ndim <= 1:
+    linear = numeric.empty( todim, dtype=int )
+    linear[:trans1.todim] = trans1.linear * trans2.numer
+    linear[trans1.todim:] = trans2.linear * trans1.numer
+  else:
+    linear = numeric.zeros( [todim,fromdim], dtype=int )
+    linear[:trans1.todim,:trans1.fromdim] = ( trans1.linear if trans1.linear.ndim == 2 else numeric.diag(trans1.linear) if trans1.linear.ndim == 1 else numeric.eye(trans1.todim,dtype=int) * trans1.linear ) * trans2.numer
+    linear[trans1.todim:,trans1.fromdim:] = ( trans2.linear if trans2.linear.ndim == 2 else numeric.diag(trans2.linear) if trans2.linear.ndim == 1 else numeric.eye(trans2.todim,dtype=int) * trans2.linear ) * trans1.numer
 
   # TODO generalize
-  if trans1.todim == 1 and trans1.fromdim == 0 and trans2.todim == trans2.fromdim == 1:
+  if fromdim == todim:
+    sign = 0
+  elif trans1.todim == 1 and trans1.fromdim == 0 and trans2.todim == trans2.fromdim == 1:
     sign = -trans1.sign
   elif trans1.todim == trans1.fromdim == 1 and trans2.todim == 1 and trans2.fromdim == 0:
     sign = trans2.sign
@@ -237,12 +265,7 @@ def tensor( trans1, trans2 ):
   else:
     raise NotImplementedError
 
-  return affinetrans( matrix, shift, numer, sign )
-
-def split_linear_offset( trans ):
-  if isinstance( trans, Affine ):
-    return trans.transform, trans.shift
-  return trans, numeric.zeros( trans.todim, dtype=int )
+  return affinetrans( linear, shift, numer, sign )
 
 def canonical( trans ):
   # keep at lowest ndims possible
@@ -256,7 +279,7 @@ def canonical( trans ):
       Ainv, Ainv_numer = updim.invsquaremat
       x = numeric.dot( Ainv, scale.shift * updim.numer + scale.linear * updim.shift )
       offset_scale = x[:-1]
-      offset_updim = x[-1] * updim.intdet
+      offset_updim = x[-1] * updim.intdet # TODO fix intdet scaling
       newscale = affinetrans( scale.linear, offset_scale, scale.numer * Ainv_numer, scale.sign )
       newupdim = affinetrans( updim.linear, offset_updim, updim.numer * Ainv_numer, updim.sign )
       if newupdim != updim:
@@ -273,7 +296,7 @@ def prioritize( trans, ndims ):
       updim, scale = trans[i-1:i+1]
       if updim.todim != updim.fromdim + 1 or scale.linear.ndim != 0:
         break
-      c = numeric.dot( updim.linear, scale.offset ) + updim.offset * scale.numer - scale.linear * updim.offset
+      c = numeric.dot( updim.linear, scale.shift ) + updim.shift * scale.numer - scale.linear * updim.shift
       newscale = affinetrans( scale.linear * updim.numer, c, updim.numer * scale.numer, scale.sign )
       assert newscale * updim == updim * scale
       trans = trans[:i-1] + (newscale,updim) + trans[i+1:]
@@ -287,17 +310,11 @@ def solve( target, trans ):
   assert todim == fromdim + 1
   assert fromdim == trans.fromdim
   assert todim == trans.todim
-  E, e = split_linear_offset( target )
-  D, d = split_linear_offset( trans )
-  Dmat = D.matrix
+  Dmat = trans.linear
   DD = numeric.dot( Dmat.T, Dmat )
-  print 'DD', DD
-  DDD = numeric.solve( DD, Dmat.T )
-  print 'DDD', DDD
-  C = numeric.dot( DDD, E.matrix )
-  c = numeric.dot( DDD, e-d )
-  result = Linear( C ) + c
-  print '1.', trans, ',', result
-  print '2.', target
+  DDD = numeric.solve( DD, Dmat.T ).astype( int ) # TEMPORARY
+  C = numeric.dot( DDD * trans.numer, target.linear )
+  c = numeric.dot( DDD, target.shift * trans.numer - trans.shift * target.numer )
+  result = affinetrans( C, c, target.numer, 0 )
   assert trans * result == target
   return result

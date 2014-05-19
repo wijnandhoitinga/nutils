@@ -290,7 +290,7 @@ class Topology( object ):
     return retvals
 
   @log.title
-  def trim( self, levelset, maxrefine=0, minrefine=0 ):
+  def trim( self, levelset, maxrefine=0, minrefine=0, eps=.01 ):
     'trim element along levelset'
 
     levelset = function.ascompiled( levelset )
@@ -298,13 +298,12 @@ class Topology( object ):
     neg = []
     __logger__ = log.enumerate( 'elem', self )
     for ielem, (trans,head) in __logger__:
-      p, n = head.trim( levelset=(trans+(levelset,)), maxrefine=maxrefine, minrefine=minrefine )
+      n, p = head.trim( levelset=(trans+(levelset,)), maxrefine=maxrefine, minrefine=minrefine, numer=int(1./eps) )
       if p: pos.append(( trans,p ))
       if n: neg.append(( trans,n ))
     # pos, nul, neg are sorted
-    postopo = TrimmedTopology( self, elements=pos, iface=nul )
-    negtopo = TrimmedTopology( self, elements=neg, iface=invnul )
-    raise NotImplementedError
+    postopo = TrimmedTopology( self, elements=pos )
+    negtopo = TrimmedTopology( self, elements=neg )
     return postopo, negtopo
 
   @cache.property
@@ -353,7 +352,7 @@ class StructuredTopology( Topology ):
 
   def __init__( self, structure, periodic=() ):
     nNone = numeric.equal(structure,None).sum()
-    indices = structure.argsort(axis=None)
+    indices = structure.ravel().argsort()
     assert numeric.equal( structure.flat[indices[:nNone]], None ).all()
     self.istructure = numeric.empty( structure.shape, dtype=int )
     self.istructure.flat[indices] = numeric.maximum( numeric.arange( len(indices) )-nNone, -1 )
@@ -661,15 +660,17 @@ class TrimmedTopology( Topology ):
 
   @property
   def boundary( self ):
-    belems = []#list( self.iface )
+    identity = transform.Identity(self.ndims)
+    belems = [ (trans,head.edgedict[identity]) for trans, head in self if isinstance( head, element.Mosaic ) ]
     for trans, head in self.basetopo.boundary:
-      index = numeric.bisect( self.elements_nohead, trans[:-1] )
+      transnd = transform.prioritize( trans, self.ndims )
+      index = numeric.bisect( self.elements_nohead, transnd[:-1] )
       if index < 0:
         continue
       ptrans, phead = self.elements[ index ]
-      if ptrans != trans[:-1]:
+      if ptrans != transnd[:-1]:
         continue
-      ehead = phead.edgedict.get( trans[-1] )
+      ehead = phead.edgedict.get( transnd[-1] )
       if ehead is None:
         continue
       belems.append( (trans,ehead) )
@@ -689,15 +690,13 @@ class TrimmedTopology( Topology ):
       keytopo = self.basetopo[ key ]
       indices = numeric.bisect_sorted( self.elements_nohead, keytopo.elements_nohead, matching=True )
       elements = self.elements[indices]
-      if numeric.equal( elements, keytopo.elements ).all():
+      if len(elements) == len(keytopo.elements) and numeric.equal( elements, keytopo.elements ).all():
         return keytopo
       assert elements, 'no trimmed elements found in %s group' % key
       return TrimmedTopology( keytopo, elements )
 
   def splinefunc( self, *args, **kwargs ):
     return self.basetopo.splinefunc( *args, **kwargs )
-
-  
 
 
 ## OLD
