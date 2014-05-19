@@ -302,9 +302,9 @@ class Topology( object ):
       if p: pos.append(( trans,p ))
       if n: neg.append(( trans,n ))
     # pos, nul, neg are sorted
-    postopo = TrimmedTopology( self, elements=pos )
     negtopo = TrimmedTopology( self, elements=neg )
-    return postopo, negtopo
+    postopo = TrimmedTopology( self, elements=pos )
+    return negtopo, postopo
 
   @cache.property
   def simplex( self ):

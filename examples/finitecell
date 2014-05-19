@@ -20,7 +20,7 @@ def main( ndims=2, nelems=4, maxrefine=2, stress=library.Hooke(lmbda=1,mu=1) ):
   wholedomain, geom = mesh.rectilinear( [verts]*ndims )
   dspace = wholedomain.splinefunc( degree=2 ).vector( ndims )
   levelset = ( geom**2 ).sum() - 1.
-  domain, complement = wholedomain.trim( levelset, maxrefine=maxrefine )
+  complement, domain = wholedomain.trim( levelset, maxrefine=maxrefine )
 
   ball_surface, ball_volume = surface_volume( ndims )
 
