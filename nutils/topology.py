@@ -41,7 +41,7 @@ class Topology( object ):
     return self.estack[:,0]
 
   def __getitem__( self, item ):
-    return self.elements[ item ]
+    return Topology( self.ndims, self.elements[ item ] )
 
   def index( self, elements ):
     if isinstance( elements, Topology ):
