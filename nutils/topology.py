@@ -40,9 +40,6 @@ class Topology( object ):
   def elements_nohead( self ):
     return self.estack[:,0]
 
-  def __getitem__( self, item ):
-    return Topology( self.ndims, self.elements[ item ] )
-
   def index( self, elements ):
     if isinstance( elements, Topology ):
       elements = elements.elements
@@ -360,6 +357,12 @@ class StructuredTopology( Topology ):
     self.groups = {}
     Topology.__init__( self, ndims=structure.ndim, elements=structure.flat[indices[nNone:]] )
     assert numeric.equal( structure, self.structure ).all() # TODO fix '=='
+
+  def __getitem__( self, item ):
+    istructure = self.istructure[item]
+    structure = self.elements[istructure]
+    assert structure.ndim == self.ndims
+    return StructuredTopology( structure ) # TODO periodic
 
   @property
   def structure( self ):
