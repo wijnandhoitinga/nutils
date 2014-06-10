@@ -1,4 +1,7 @@
-all: numeric
+all: nutils numeric
+
+nutils:
+	git pull
 
 numeric:
 	git submodule init nutils/numeric
@@ -13,6 +16,6 @@ clean:
 	$(MAKE) -C nutils/numeric clean
 	rm -f nutils/*.pyc tests/*.pyc
 
-.PHONY: all numeric test clean
+.PHONY: all nutils numeric test clean
 
 # vim:noexpandtab

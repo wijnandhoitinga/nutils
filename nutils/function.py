@@ -496,7 +496,7 @@ class ArrayFunc( Evaluable ):
   def ngrad( self, coords, ndims=0 ):
     'normal gradient'
 
-    return dotnorm( self.grad( coords, ndims ), coords, ndims )
+    return dotnorm( self.grad( coords, ndims ), coords )
 
   def nsymgrad( self, coords, ndims=0 ):
     'normal gradient'
@@ -539,6 +539,9 @@ class Transform( ArrayFunc ):
     while elem[-1].fromdim != fromdim:
       elem = elem[:-1]
     return util.product( elem ).matrix
+
+  def _localgradient( self, ndims ):
+    return _zeros( self.shape + (ndims,) )
 
 class GetItemArray( ArrayFunc ):
 
@@ -1712,9 +1715,7 @@ class ElemFunc( ArrayFunc ):
   def _localgradient( self, ndims ):
     if ndims == self.roottrans.todim:
       return eye( ndims )
-    assert self.roottrans.todim > ndims
-    raise NotImplementedError
-    return Transform( self, Cascade(ndims,self.side) )
+    return Transform( self.roottrans.todim, ndims ) # TODO check side
 
   def _opposite( self ):
     return ElemFunc( self.roottrans.ndims, 1-self.roottrans.side )
