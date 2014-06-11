@@ -1,6 +1,10 @@
 from . import util, log, numeric, parallel, _
 import scipy.sparse
-from scipy.sparse.sparsetools.csr import _csr
+# Import fix
+try:
+  from scipy.sparse.sparsetools.csr import _csr
+except:
+  from scipy.sparse import sparsetools as _csr
 from scipy.sparse.linalg.isolve import _iterative
 import time
 
@@ -398,7 +402,7 @@ class SparseMatrix( Matrix ):
     else:
       assert b.ndim == 1, 'right-hand-side has shape %s, expected a vector' % (b.shape,)
       assert b.shape == self.shape[:1]
-  
+
     if symmetric:
       restart = None
 
@@ -508,7 +512,7 @@ class DenseMatrix( Matrix ):
     else:
       assert b.ndim == 1, 'right-hand-side has shape %s, expected a vector' % (b.shape,)
       assert b.shape == self.shape[:1]
-  
+
     if constrain is lconstrain is rconstrain is None:
       return numeric.solve( self.data, b )
 

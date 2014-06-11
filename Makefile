@@ -1,4 +1,6 @@
-all: nutils numeric
+default: nutils numeric
+
+all: nutils numeric docs
 
 nutils:
 	git pull
@@ -9,6 +11,9 @@ numeric:
 	rm -f nutils/numeric.pyc # for transition
 	$(MAKE) -C nutils/numeric test_c
 
+docs:
+	$(MAKE) -C docs html
+
 test:
 	python tests/test.py
 
@@ -16,6 +21,4 @@ clean:
 	$(MAKE) -C nutils/numeric clean
 	rm -f nutils/*.pyc tests/*.pyc
 
-.PHONY: all nutils numeric test clean
-
-# vim:noexpandtab
+.PHONY: default all nutils numeric test clean

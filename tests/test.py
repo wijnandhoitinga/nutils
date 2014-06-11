@@ -22,6 +22,9 @@ def testgroup( func ):
     __logger__ = TestCaptureLog()
     try:
       retval = func( *args, **kwargs )
+    except KeyboardInterrupt:
+      print '\n## INTERRUPTED'
+      sys.exit( 1 )
     except:
       print '\n## ERROR IN SETUP CODE'
       if __logger__:

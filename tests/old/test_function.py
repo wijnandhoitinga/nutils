@@ -4,6 +4,8 @@ import numpy
 
 class FuncTest( object ):
 
+  haslocalgradient = True
+
   def __init__( self ):
     domainelem = element.Element( element.Dummy(2) )
     r, theta = function.ElemFunc( domainelem ) # corners at (0,0), (0,1), (1,1), (1,0)
@@ -81,6 +83,8 @@ class FuncTest( object ):
           op_fun.eval(self.elem,self.points), decimal=15 )
 
   def test_localgradient( self ):
+    if not self.haslocalgradient:
+      return
     eps = 1e-6
     D = numeric.array([-.5*eps,.5*eps])[:,_,_] * self.elem.root_transform.inv.matrix.T[_,:,:]
     fdpoints = self.points[_,_,:,:] + D[:,:,_,:]
@@ -90,6 +94,8 @@ class FuncTest( object ):
     numpy.testing.assert_array_almost_equal( fdgrad, G.eval(self.elem,self.points), decimal=5 )
 
   def test_gradient( self ):
+    if not self.haslocalgradient:
+      return
     eps = 1e-6
     D = numeric.array([-.5*eps,.5*eps])[:,_,_] * numeric.eye(2)
     fdpoints = self.find( self.geomcmp.eval(self.elem,self.points)[_,_,:,:] + D[:,:,_,:], self.points[_,_,:,:] )
@@ -99,6 +105,8 @@ class FuncTest( object ):
     numpy.testing.assert_array_almost_equal( fdgrad, G.eval(self.elem,self.points), decimal=5 )
 
   def test_doublegradient( self ):
+    if not self.haslocalgradient:
+      return
     eps = 1e-5
     D = numeric.array([-.5*eps,.5*eps])[:,_,_] * numeric.eye(2)
     DD = D[:,_,:,_,:] + D[_,:,_,:,:]
@@ -353,5 +361,13 @@ class TestStack( FuncTest ):
   op = staticmethod(lambda a,b: function.stack([a,b]))
   n_op = staticmethod(lambda a,b: numeric.concatenate( [a[...,_,:],b[...,_,:]], axis=-2))
 
+# EVAL ONLY
+
+class TestEig( FuncTest ):
+  shapes = [(3,3)]
+  haslocalgradient = False
+  op = staticmethod(lambda a: function.eig(a,symmetric=False)[1] )
+  n_op = staticmethod(lambda a: numpy.array([ numpy.linalg.eig(ai)[1] for ai in a ]) )
+  
 
 # vim:shiftwidth=2:foldmethod=indent:foldnestmax=2

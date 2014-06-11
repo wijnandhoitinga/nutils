@@ -13,9 +13,9 @@ line_points, dummy = points(line)
 quad = line**2
 quad_points, dummy = points(quad)
 
-trans = ( transform.Root( 2, object() ),
-  transform.Linear( numeric.array([[2,1],[-1,3]]) ) + [1,0], # corners at (1,0), (3,-1), (4,2), (2,3)
-  transform.Linear( numeric.array([[0,1],[-1,0]]) ) + [1,0], # corners at (3,-1), (2,-4), (4,-5), (5,-2)
+trans = ( transform.Root( 2 ),
+  transform.affinetrans( numeric.array([[2,1],[-1,3]]), numeric.array([1,0]), 1, 0 ), # corners at (1,0), (3,-1), (4,2), (2,3)
+  transform.affinetrans( numeric.array([[0,1],[-1,0]]), numeric.array([1,0]), 1, 0 ), # corners at (3,-1), (2,-4), (4,-5), (5,-2)
 )
 head = quad
 elem = trans, head
@@ -46,7 +46,7 @@ def find( target, xi0 ):
     if numeric.less( numpy.abs(err), 1e-12 ).all():
       countdown -= 1
     dxi_root = ( Jinv.eval(elem,xi) * err[...,_,:] ).sum(-1)
-    xi = xi + numeric.dot( dxi_root, root_transform.inv.matrix.T )
+    xi = xi + numeric.dot( dxi_root, root_transform.invmatrix.T )
     iiter += 1
     assert iiter < 100, 'failed to converge in 100 iterations'
   return xi
@@ -88,7 +88,7 @@ def checkfunc( name, op, n_op, *shapes ):
   @unittest
   def localgradient():
     eps = 1e-6
-    D = numeric.array([-.5*eps,.5*eps])[:,_,_] * root_transform.inv.matrix.T[_,:,:]
+    D = numeric.array([-.5*eps,.5*eps])[:,_,_] * root_transform.invmatrix.T[_,:,:]
     fdpoints = quad_points[_,_,:,:] + D[:,:,_,:]
     F = n_op( *argsfunc.eval(elem,fdpoints) )
     fdgrad = ((F[1]-F[0])/eps).transpose( numeric.roll(numeric.arange(F.ndim-1),-1) )
