@@ -764,6 +764,16 @@ class NWeights( ArrayFunc ):
       scale = weights # points
     return numeric.times( scale, roottrans.det )
 
+class AxisLength( Evaluable ):
+  def __init__( self, array, axis ):
+    if axis < 0:
+      axis += array.ndim
+    assert 0 <= axis < array.ndim
+    Evaluable.__init__( self, args=[array,axis-array.ndim], evalf=self.axislength )
+  @staticmethod
+  def axislength( array, axis ):
+    return array.shape[axis]
+
 class Function( ArrayFunc ):
   'function'
 
@@ -825,6 +835,10 @@ class Function( ArrayFunc ):
       return grad
     trans = Transform( fromdim=ndims, todim=self.elem.ndims )
     return dot( grad[...,_], trans, axes=-2 )
+
+  def _suppfun( self ):
+    length = AxisLength( self, axis=0 )
+    return repeat( numeric.ones( (1,)+self.shape[1:] ), axis=0, length=length )
 
 class Choose( ArrayFunc ):
   'piecewise function'
@@ -991,6 +1005,10 @@ class Concatenate( ArrayFunc ):
     funcs = [ localgradient( func, ndims ) for func in self.funcs ]
     return concatenate( funcs, axis=self.axis )
 
+  def _suppfun( self ):
+    funcs = [ suppfun( func ) for func in self.funcs ]
+    return concatenate( funcs, axis=self.axis )
+    
   def _multiply( self, other ):
     funcs = []
     n0 = 0
@@ -1246,6 +1264,10 @@ class Multiply( ArrayFunc ):
     return self is other or (
           isinstance( other, Multiply )
       and _matchpairs( self.funcs, other.funcs ) )
+
+  def _suppfun( self ):
+    func1, func2 = self.funcs
+    return suppfun(func1)*suppfun(func2)
 
   def _sum( self, axis ):
     func1, func2 = self.funcs
@@ -1786,6 +1808,9 @@ class Sign( ArrayFunc ):
   def _get( self, axis, item ):
     return sign( get( self.func, axis, item ) )
 
+  def _suppfun ( self ):
+    return suppfun( self.func )
+
   def _take( self, index, axis ):
     return sign( take( self.func, index, axis ) )
 
@@ -2062,6 +2087,9 @@ class Inflate( ArrayFunc ):
 
   def _opposite( self ):
     return inflate( opposite(self.func), opposite(self.dofmap), self.length, self.axis )
+
+  def _suppfun( self ):
+    return inflate( suppfun(self.func), self.dofmap, self.length, self.axis )
 
 class Diagonalize( ArrayFunc ):
   'diagonal matrix'
@@ -3165,6 +3193,9 @@ def pointdata ( topo, ischeme, func=None, shape=None, value=None ):
     data[ elem ] = values, ipoints
 
   return Pointdata( data, shape )
+
+def suppfun( func ):
+  return func._suppfun()
 
 @log.title
 def fdapprox( func, w, dofs, delta=1.e-5 ):

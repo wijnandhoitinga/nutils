@@ -141,7 +141,7 @@ class Topology( object ):
     return onto.dot( weights )
 
   @log.title
-  def project( self, fun, onto, geometry, tol=0, ischeme=None, droptol=1e-8, exact_boundaries=False, constrain=None, verify=None, maxiter=0, ptype='lsqr' ):
+  def project( self, fun, onto, geometry, tol=0, ischeme=None, droptol=1e-8, exact_boundaries=False, constrain=None, verify=None, maxiter=0, ptype='lsqr', precon=None ):
     'L2 projection of function onto function space'
 
     log.debug( 'projection type:', ptype )
@@ -173,7 +173,7 @@ class Topology( object ):
       else:
         solvecons = constrain.copy()
         solvecons[~(constrain.where|N)] = 0
-        u = A.solve( b, solvecons, tol=tol, symmetric=True, maxiter=maxiter )
+        u = A.solve( b, solvecons, tol=tol, symmetric=True, maxiter=maxiter, precon=precon )
         constrain[N] = u[N]
 
     elif ptype == 'convolute':
@@ -303,6 +303,46 @@ class Topology( object ):
     postopo = TrimmedTopology( self, elements=pos )
     return negtopo, postopo
 
+#  @log.title
+#
+#  def trim( self, levelset, maxrefine=0, minrefine=0, finestscheme=None ):
+#    'trim element along levelset'
+#
+#    if finestscheme:
+#      finestscheme = pointset.aspointset(finestscheme)
+#    levelset = function.ascompiled( levelset )
+#    pos = numeric.empty( self.elements.shape, dtype=object )
+#    neg = numeric.empty( self.elements.shape, dtype=object )
+#    nul = []
+#    __logger__ = log.enumerate( 'elem', self )
+#    for ielem, elem in __logger__:
+#      p, i, n = elem[-1].trim( levelset=(elem[:-1]+(levelset,)), maxrefine=maxrefine, minrefine=minrefine, finestscheme=finestscheme )
+#      if p: pos[ielem] = elem[:-1] + (p,)
+#      if i: nul.append( elem[:-1] + (i,) )
+#      if n: neg[ielem] = elem[:-1] + (n,)
+#    posgroups, neggroups = {}, {}
+#    for key, groupelems in self.groups.items():
+#      ind = self.index( groupelems )
+#      posgroups[key] = Topology( ndims=self.ndims, elements=filter(None,pos[ind]) )
+#      neggroups[key] = Topology( ndims=self.ndims, elements=filter(None,neg[ind]) )
+#    if False: #self.boundary:
+#      posboundary, negboundary = self.boundary.trim( levelset, maxrefine, minrefine )
+#      posboundary = posboundary.new_with_group( 'trim',
+#        UnstructuredTopology( ndims=self.ndims-1, elements=nul ) )
+#      negboundary = negboundary.new_with_group( 'trim',
+#        UnstructuredTopology( ndims=self.ndims-1, elements=[ elem[:-1]+(elem[-1].flipped,) for elem in nul ] ) )
+#    else:
+#      posboundary = negboundary = None
+#
+#    if isinstance(self,StructuredTopology):
+#      postopo = StructuredTopology( self.structure_like( pos ) )
+#      negtopo = StructuredTopology( self.structure_like( neg ) )
+#    else:
+#      postopo = UnstructuredTopology( ndims=self.ndims, elements=filter(None,pos), groups=posgroups, boundary=posboundary )
+#      negtopo = UnstructuredTopology( ndims=self.ndims, elements=filter(None,neg), groups=neggroups, boundary=negboundary )
+#
+#    return postopo, negtopo
+
   @cache.property
   def simplex( self ):
     simplices = numeric.asobjvec( (etrans+(strans,),shead) for etrans, ehead in self for strans, shead in ehead.simplices )
@@ -409,6 +449,23 @@ class StructuredTopology( Topology ):
 
     if isinstance( degree, int ):
       degree = ( degree, ) * self.ndims
+
+#   removedofsnd = []
+#   if removedofs != None:
+#     removedofs = numeric.array(removedofs)
+#     if removedofs.ndim==1:
+#       if removedofs.dtype==object:
+#         assert removedofs.size==self.ndims
+#       elif removedofs.dtype==int:
+#         removedofsnd = numeric.unique(removedofs)[::-1]
+#         removedofs   = None
+#       else:  
+#         raise Exception('Invalid dtype for removedofs')
+#     elif removedofs.ndim==2:
+#       assert removedofs.dtype==int
+#       assert removedofs.shape[0]==self.ndims
+#     else:
+#       raise Exception('Invalid removedofs format')
 
     if removedofs == None:
       removedofs = [None] * self.ndims
@@ -563,6 +620,7 @@ class HierarchicalTopology( Topology ):
     if isinstance( basetopo, HierarchicalTopology ):
       basetopo = basetopo.basetopo
     self.basetopo = basetopo
+    self.groups = {} #TODO
     self.maxrefine = max( len(elem) for elem in elements ) \
                    - min( len(elem) for elem in self.basetopo )
     Topology.__init__( self, basetopo.ndims, elements )
@@ -631,11 +689,20 @@ class HierarchicalTopology( Topology ):
     dofmap, funcmap = zip( *[ collect[elem] for elem in self.elements_nohead ] )
     return function.function( self.elements_nohead, funcmap, dofmap, ndofs, self.ndims )
 
+  @property
+  def boundary ( self ):
+    return self.basetopo.refine(self.maxrefine).boundary
+
   def stdfunc( self, *args, **kwargs ):
     return self._funcspace( lambda topo: topo.stdfunc( *args, **kwargs ) )
 
   def splinefunc( self, *args, **kwargs ):
     return self._funcspace( lambda topo: topo.splinefunc( *args, **kwargs ) )
+
+  @property
+  def refined( self ):
+    refined_elements = [ elem[:-1] + child for elem in self for child in sorted(elem[-1].children) ]
+    return HierarchicalTopology( self.basetopo, refined_elements )
 
 class RefinedTopology( Topology ):
   'refinement'
@@ -656,9 +723,8 @@ class RefinedTopology( Topology ):
 class TrimmedTopology( Topology ):
   'trimmed'
 
-  def __init__( self, basetopo, elements, iface=None ):
+  def __init__( self, basetopo, elements ):
     self.basetopo = basetopo
-    self.iface = iface
     Topology.__init__( self, basetopo.ndims, elements )
 
   @property
@@ -700,7 +766,7 @@ class TrimmedTopology( Topology ):
 
   def splinefunc( self, *args, **kwargs ):
     return self.basetopo.splinefunc( *args, **kwargs )
-
+    
 
 ## OLD
 

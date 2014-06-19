@@ -79,6 +79,23 @@ class Mosaic( Element ):
   def simplices( self ): # merge transformations recursively
     return [ (ctrans*strans,shead) for ctrans, chead in self.children for strans, shead in chead.simplices ]
 
+class MaskedElement( Element ):
+
+  def __init__( self, coords, weights ):
+    npoints, ndims = coords.shape
+    assert weights.ndim==1
+    assert weights.shape[0]==npoints
+    self.coords = coords
+    self.weights = weights
+    Element.__init__( self, ndims )
+
+  def pointset( self, pointset ):
+    return self.coords, self.weights
+
+  @property
+  def simplices( self ):
+    return (self,),
+
 class Reference( Element ):
 
   def __init__( self, vertices ):
@@ -330,7 +347,12 @@ class Simplex( Reference ):
     assert self.ndims in (2,3)
     return self.vertices, numeric.ones(self.nverts)
 
-  def pointset_gauss( self, degree ):
+  def pointset_gauss( self, degree, *degs ):
+    
+    if degs:
+      assert len(degs)==self.ndims-1
+      degree += sum(degs)
+
     assert isinstance( degree, int ) and degree >= 0
     if self.ndims == 0: # point
       return numeric.zeros((1,0)), numeric.ones(1)
@@ -362,12 +384,12 @@ class Simplex( Reference ):
         VW = 1/6. - (V+W) / 2.
         coords = numeric.array( [[1-2*A,A,A,1-2*B,B,B,1-C-D,1-C-D,C,C,D,D],[A,1-2*A,A,B,1-2*B,B,C,D,1-C-D,D,1-C-D,C]] )
         weights = numeric.array( [V,V,V,W,W,W,VW,VW,VW,VW,VW,VW] ) / 2.
-      elif degree == 7:
+      else:
         A = 0.260345966079038; B = 0.065130102902216; C = 0.312865496004875; D = 0.048690315425316; U = 0.175615257433204; V = 0.053347235608839; W = 0.077113760890257
         coords = numeric.array( [[1./3,1-2*A,A,A,1-2*B,B,B,1-C-D,1-C-D,C,C,D,D],[1./3,A,1-2*A,A,B,1-2*B,B,C,D,1-C-D,D,1-C-D,C]] )
         weights = numeric.array( [1-3*U-3*V-6*W,U,U,U,V,V,V,W,W,W,W,W,W] ) / 2.
-      else:
-        raise NotImplementedError
+        if degree > 7:
+          warnings.warn('Inexact integration for polynomial of degree %i'%degree)
     elif self.ndims == 3: # tetrahedron: http://people.sc.fsu.edu/~jburkardt/datasets/quadrature_rules_tet/quadrature_rules_tet.html'''
       if degree == 1:
         coords = numeric.array( [[1],[1],[1]] ) / 4.
@@ -474,7 +496,7 @@ class Simplex( Reference ):
                               [0.2000000000000000,0.1000000000000000,0.6000000000000000],
                               [0.6000000000000000,0.2000000000000000,0.1000000000000000]]).T
         weights = numeric.array([0.1095853407966528,0.0635996491464850,0.0635996491464850,0.0635996491464850,0.0635996491464850,-0.3751064406859797,-0.3751064406859797,-0.3751064406859797,-0.3751064406859797,0.0293485515784412,0.0293485515784412,0.0293485515784412,0.0293485515784412,0.0058201058201058,0.0058201058201058,0.0058201058201058,0.0058201058201058,0.0058201058201058,0.0058201058201058,0.1653439153439105,0.1653439153439105,0.1653439153439105,0.1653439153439105,0.1653439153439105,0.1653439153439105,0.1653439153439105,0.1653439153439105,0.1653439153439105,0.1653439153439105,0.1653439153439105,0.1653439153439105]) / 6.
-      elif degree == 8:
+      else: #degree=8 exact otherwise not exact
         coords = numeric.array([[0.2500000000000000,0.2500000000000000,0.2500000000000000],
                               [0.6175871903000830,0.1274709365666390,0.1274709365666390],
                               [0.1274709365666390,0.1274709365666390,0.1274709365666390],
@@ -521,8 +543,8 @@ class Simplex( Reference ):
                               [0.7303134278075384,0.0379700484718286,0.1937464752488044],
                               [0.1937464752488044,0.7303134278075384,0.0379700484718286]]).T
         weights = numeric.array([-0.2359620398477557,0.0244878963560562,0.0244878963560562,0.0244878963560562,0.0244878963560562,0.0039485206398261,0.0039485206398261,0.0039485206398261,0.0039485206398261,0.0263055529507371,0.0263055529507371,0.0263055529507371,0.0263055529507371,0.0263055529507371,0.0263055529507371,0.0829803830550589,0.0829803830550589,0.0829803830550589,0.0829803830550589,0.0829803830550589,0.0829803830550589,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0254426245481023,0.0134324384376852,0.0134324384376852,0.0134324384376852,0.0134324384376852,0.0134324384376852,0.0134324384376852,0.0134324384376852,0.0134324384376852,0.0134324384376852,0.0134324384376852,0.0134324384376852,0.0134324384376852]) / 6.
-      else:
-        NotImplementedError
+        if degree > 8:
+          warnings.warn('Inexact integration for polynomial of degree %i'%degree)
     else:
       raise NotImplementedError
     return coords.T, weights
@@ -589,9 +611,15 @@ class Tensor( Reference ):
       raise NotImplementedError
     return numeric.array(points), numeric.ones(self.nverts)
 
-  def pointset( self, pointset ):
-    ipoints1, iweights1 = pointset( self.simplex1 )
-    ipoints2, iweights2 = pointset( self.simplex2 )
+  def pointset( self, pset ):
+    if len(pset.args)==1:
+      pset1 = pset2 = pset
+    else:  
+      assert len(pset.args)==self.ndims
+      pset1 = pointset.Pointset( pset.name, *pset.args[:self.simplex1.ndims] )
+      pset2 = pointset.Pointset( pset.name, *pset.args[self.simplex1.ndims:] )
+    ipoints1, iweights1 = pset1( self.simplex1 )
+    ipoints2, iweights2 = pset2( self.simplex2 )
     ipoints = numeric.empty( (ipoints1.shape[0],ipoints2.shape[0],self.ndims) )
     ipoints[:,:,0:self.simplex1.ndims] = ipoints1[:,_,:self.simplex1.ndims]
     ipoints[:,:,self.simplex1.ndims:self.ndims] = ipoints2[_,:,:self.simplex2.ndims]
