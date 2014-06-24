@@ -1,0 +1,135 @@
+#!/usr/bin/env python
+
+from nutils import *
+
+def makeplot ( name, topo, geom, funcsp  ):
+  points, vals = topo.elem_eval( [geom[0],funcsp], ischeme='bezier10', separate=True )
+  ticks = numeric.unique( topo.elem_eval( geom[0], ischeme='bezier2', separate=False ) )
+  with plot.PyPlot(name) as plt:
+    plt.plot( points, vals )
+    plt.xticks( ticks )
+    plt.grid()
+
+def l2cond ( topo, geom, funcsp ):
+  mat = topo.integrate( funcsp[:,_]*funcsp[_,:], geometry=geom, ischeme='gauss4' )
+  return mat.cond()
+
+def selectelems( subdom, topo, geom ):
+  ticks = plot._nansplit(topo.elem_eval( geom[0], ischeme='bezier2', separate=True ))
+  select = (numeric.greater( ticks, subdom[0]-1e-12 ) & numeric.less( ticks, subdom[1]+1e-12 )).all(axis=1)
+  return [elem[:-1] for elem in topo.elements[select]]
+
+def main ( nelems = 8,
+           degree = 2,
+           trim   = 2 ):
+
+  #Create domain
+  topo, geom = mesh.rectilinear( [numeric.arange(nelems+1)] )
+
+  if trim:
+    lvl = geom[0]-trim
+    topo, negtopo = topo.trim( lvl, maxrefine=2 )
+
+  #Create basis
+  funcsp = topo.splinefunc( degree=degree )
+  
+  #Plot the orignal basis
+  makeplot( 'original', topo, geom, funcsp )
+
+  refined_elems = selectelems( [2,5], topo, geom )
+
+  topo = topo.refined_by( refined_elems )
+
+  print topo
+  print topo.basetopo
+  print topo.basetopo.basetopo
+
+  funcsp = topo.splinefunc( degree=degree )
+
+  makeplot( 'refined_1', topo, geom, funcsp )
+
+  refined_elems = selectelems( [3,6], topo, geom )
+
+  topo = topo.refined_by( refined_elems )
+
+  funcsp = topo.splinefunc( degree=degree )
+
+  makeplot( 'refined_2', topo, geom, funcsp )
+
+def alternative ( nelems = 8,
+                  degree = 2,
+                  trim   = 2  ):
+
+  #Create domain
+  topo, geom = mesh.rectilinear( [numeric.arange(nelems+1)] )
+
+  if trim:
+    lvl = geom[0]-trim
+    trimmedtopo, negtopo = topo.trim( lvl, maxrefine=2 )
+
+  #Create basis
+  funcsp = trimmedtopo.splinefunc( degree=degree )
+  
+  #Plot the orignal basis
+  makeplot( 'original', trimmedtopo, geom, funcsp )
+
+  log.info( 'Condition number: %8.6e' % l2cond( trimmedtopo, geom, funcsp ) )
+
+  refined_elems = selectelems( [2,5], topo, geom )
+
+  topo = topo.refined_by( refined_elems )
+
+  trimmedtopo, negtopo = topo.trim( lvl, maxrefine=2 )
+
+  funcsp = trimmedtopo.splinefunc( degree=degree )
+
+  makeplot( 'refined_1', trimmedtopo, geom, funcsp )
+
+  log.info( 'Condition number: %8.6e' % l2cond( trimmedtopo, geom, funcsp ) )
+
+  refined_elems = selectelems( [3,6], topo, geom )
+
+  topo = topo.refined_by( refined_elems )
+
+  trimmedtopo, negtopo = topo.trim( lvl, maxrefine=2 )
+
+  funcsp = trimmedtopo.splinefunc( degree=degree )
+
+  makeplot( 'refined_2', trimmedtopo, geom, funcsp )
+
+  log.info( 'Condition number: %8.6e' % l2cond( trimmedtopo, geom, funcsp ) )
+
+def gokturk ( nelems = 5,
+              degree = 2,
+              trim   = 4  ):
+
+  #Create domain
+  topo, geom = mesh.rectilinear( [numeric.arange(nelems+1)] )
+
+  lvl = geom[0]-trim
+  trimmedtopo, negtopo = topo.trim( lvl, maxrefine=2 )
+
+  #Create basis
+  funcsp = trimmedtopo.splinefunc( degree=degree )
+  
+  #Plot the orignal basis
+  makeplot( 'original', trimmedtopo, geom, funcsp )
+
+  log.info( 'Condition number: %8.6e' % l2cond( trimmedtopo, geom, funcsp ) )
+
+  refined_elems = selectelems( [3,5], topo, geom )
+
+  topo = topo.refined_by( refined_elems )
+
+  trimmedtopo, negtopo = topo.trim( lvl, maxrefine=2 )
+
+  funcsp = trimmedtopo.splinefunc( degree=degree )
+
+  makeplot( 'refined_1', trimmedtopo, geom, funcsp )
+
+  log.info( 'Condition number: %8.6e' % l2cond( trimmedtopo, geom, funcsp ) )
+
+
+util.run( main, alternative, gokturk )
+
+

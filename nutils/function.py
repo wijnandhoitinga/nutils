@@ -1,4 +1,4 @@
-from . import util, core, cache, numeric, transform, log, _
+from . import util, core, cache, numeric, transform, log, _, pointset
 import sys, warnings
 
 CACHE   = object()
@@ -1808,7 +1808,7 @@ class Pointdata( ArrayFunc ):
     
   @staticmethod  
   def pointdata( elem, points, data ):
-    myvals,mypoint = data[elem]
+    myhead,myvals,mypoint = data[elem]
     assert mypoint == points, 'Illegal point set'
     return myvals
 
@@ -1816,7 +1816,7 @@ class Pointdata( ArrayFunc ):
     func = asarray(func)
     assert func.shape == self.shape
     func = func.compiled()
-    data = dict( (elem,(numeric.maximum(func.eval(elem,points),values),points)) for elem,(values,points) in self.data.iteritems() )
+    data = dict( (elem,(myhead,numeric.maximum(func.eval(elem+(myhead,),points),values),points)) for elem,(myhead,values,points) in self.data.iteritems() )
 
     return Pointdata( data, self.shape )
 
@@ -3079,11 +3079,13 @@ def pointdata ( topo, ischeme, func=None, shape=None, value=None ):
     shape = value.shape
 
   data = {}
+  compiledfunc = func.compiled() if func is not None else None
   for elem in topo:
-    ipoints, iweights = elem.eval( ischeme )
+    points = pointset.aspointset( ischeme )
+    ipoints, iweights = points( elem[-1] )
     values = numeric.empty( ipoints.shape[:-1]+shape, dtype=float )
-    values[:] = func.eval(elem,ischeme) if func is not None else value
-    data[ elem ] = values, ipoints
+    values[:] = compiledfunc.eval(elem[-1],points) if compiledfunc is not None else value
+    data[ elem[:-1] ] = elem[-1], values, ipoints
 
   return Pointdata( data, shape )
 

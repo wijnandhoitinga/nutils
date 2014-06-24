@@ -27,6 +27,10 @@ class Topology( object ):
     self.elements = numeric.asobjvec( elements )
     assert numeric.greater( self.elements[1:], self.elements[:-1] ).all() # check sorted
 
+  @property
+  def elements_nohead( self ):
+    return [ elem[:-1] for elem in self ]
+
   def __getitem__( self, item ):
     return self.elements[ item ]
 
@@ -402,7 +406,7 @@ class StructuredTopology( Topology ):
 
   def __init__( self, structure, periodic=() ):
     nNone = numeric.equal(structure,None).sum()
-    indices = structure.argsort(axis=None)
+    indices = structure.argsort(axis=None) if structure.ndim else [0]
     assert numeric.equal( structure.flat[indices[:nNone]], None ).all()
     self.istructure = numeric.empty( structure.shape, dtype=int )
     self.istructure.flat[indices] = numeric.maximum( numeric.arange( len(indices) )-nNone, -1 )
@@ -709,6 +713,24 @@ class HierarchicalTopology( Topology ):
     refined_elements = [ elem[:-1] + child for elem in self for child in sorted(elem[-1].children) ]
     return HierarchicalTopology( self.basetopo, refined_elements )
 
+  def trim( self, *args, **kwargs ):
+    hierarchical_topologies = []
+    for trimmed_basetopo in self.basetopo.trim( *args, **kwargs ):
+      elements = []
+      for elem in self:
+        trans = elem[:-1]
+        index = numeric.bisect( numeric.asobjvec(trimmed_basetopo.elements_nohead), trans )
+        found_elem = trimmed_basetopo.elements[index]
+        found_trans = found_elem[:-1]
+        if trans[:len(found_trans)] != found_trans: # not found
+          continue
+        trimmed_elem = found_elem[-1]
+        for target_ctrans in trans[len(found_trans):]:
+          trimmed_elem, = [ child for ctrans, child in trimmed_elem.children if ctrans == target_ctrans ] # TODO use bisection
+        elements.append( trans+(trimmed_elem,) )
+      hierarchical_topologies.append( HierarchicalTopology( trimmed_basetopo, elements ) )
+    return hierarchical_topologies
+
 class RefinedTopology( Topology ):
   'refinement'
 
@@ -735,13 +757,41 @@ class TrimmedTopology( Topology ):
 
   @property
   def boundary( self ):
-    return self.basetopo.boundary
+    belems = []
+    for elem in self.basetopo.boundary:
+      index = numeric.bisect( self.elements_nohead, elem[:-2] )
+      if self.elements_nohead[index]==elem[:-2]:
+        belems.append( elem )
+    return TrimmedTopology( self.basetopo.boundary, belems )
 
   def __getitem__( self, key ):
-    raise NotImplementedError
+    keytopo = self.basetopo[key]
+    indices = numeric.bisect_sorted( self.elements_nohead, keytopo.elements_nohead, matching=True )
+    elements = self.elements[indices]
+    if len(elements) == len(keytopo.elements) and numeric.equal( elements, keytopo.elements ).all():
+      return keytopo
+    assert elements, 'no trimmed elements found in %s group' % key
+    return TrimmedTopology( keytopo, elements )
 
   def splinefunc( self, *args, **kwargs ):
-    return self.basetopo.splinefunc( *args, **kwargs )
+    funcsp = self.basetopo.splinefunc( *args, **kwargs ) # shape functions for level irefine
+    (func,(dofaxis,)), = function.blocks( funcsp ) # separate elem-local funcs and global placement index
+  
+    stdmap = {}
+    dofmap = {}
+    newdofs = -numeric.ones( funcsp.shape[0], dtype=int )
+    ndofs = 0
+
+    for elem in self:
+      stdmap[ elem[:-1] ] = func.stdmap[ elem[:-1] ]
+      idofs = dofaxis.dofmap[ elem[:-1] ] # local dof numbers
+      new   = numeric.equal( newdofs[idofs], -1 )
+      nnew  = new.sum()
+      if nnew:
+        newdofs[idofs[new]] = ndofs + numeric.arange( nnew )
+        ndofs += nnew
+      dofmap[ elem[:-1] ] = newdofs[idofs] # add result to IEN mapping of new function object
+    return function.function( stdmap, dofmap, ndofs, self.ndims )
 
   @property
   def refined( self ):
