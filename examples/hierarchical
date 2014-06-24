@@ -19,6 +19,26 @@ def selectelems( subdom, topo, geom ):
   select = (numeric.greater( ticks, subdom[0]-1e-12 ) & numeric.less( ticks, subdom[1]+1e-12 )).all(axis=1)
   return [elem[:-1] for elem in topo.elements[select]]
 
+def dof_levels( funcsp ):
+  (func,(dofaxis,)), = function.blocks( funcsp )
+  levels = -numeric.ones( funcsp.shape[0], dtype=int )
+  for elem, idofs in dofaxis.dofmap.items():
+    stds = func.stdmap[elem]
+    assert len(elem) - 1 == len(stds)
+    for i, std in enumerate( stds ):
+      level = len(stds) - i - 1
+      ndofs = std[1].sum() if isinstance( std, tuple ) \
+         else std.nshapes if std is not None \
+         else 0
+      I = idofs[:ndofs]
+      idofs = idofs[ndofs:]
+      new = numeric.equal( levels[I], -1 )
+      levels[ I[new] ] = level
+      assert numeric.equal( levels[ I[~new] ], level ).all()
+    assert not len(idofs)
+  assert not numeric.equal( levels, -1 ).any()
+  return levels
+
 def main ( nelems = 8,
            degree = 2,
            trim   = 2 ):
@@ -55,6 +75,8 @@ def main ( nelems = 8,
   funcsp = topo.splinefunc( degree=degree )
 
   makeplot( 'refined_2', topo, geom, funcsp )
+
+  print dof_levels( funcsp )
 
 def alternative ( nelems = 8,
                   degree = 2,
