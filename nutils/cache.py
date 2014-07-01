@@ -64,7 +64,8 @@ class FileCache( object ):
   def __init__( self, *args ):
     'constructor'
 
-    import hashlib
+    import os, hashlib
+    from . import log, prop
     strhash = ','.join( str(arg) for arg in args )
     md5hash = hashlib.md5( strhash ).hexdigest()
     log.info( 'using cache:', md5hash )
@@ -78,6 +79,7 @@ class FileCache( object ):
     'call'
 
     import cPickle
+    from . import log
     name = func.__name__ + ''.join( ' %s' % arg for arg in args ) + ''.join( ' %s=%s' % item for item in kwargs.iteritems() )
     pos = self.data.tell()
     try:

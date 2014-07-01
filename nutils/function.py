@@ -1650,7 +1650,7 @@ class Power( ArrayFunc ):
     # ln self = power * ln func
     # self` / self = power` * ln func + power * func` / func
     # self` = power` * ln func * self + power * func` * func**(power-1)
-    return self.power * ( self.func**(self.power-1) )[...,_] * localgradient( self.func, ndims ) \
+    return self.power * power( self.func, self.power-1 )[...,_] * localgradient( self.func, ndims ) \
          + localgradient( self.power, ndims ) * ln( self.func ) * self
 
   def _power( self, n ):

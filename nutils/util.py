@@ -1,6 +1,18 @@
 from . import log, prop, numeric
 import sys, os, time, warnings, itertools
 
+def gitstats():
+  try:
+    import git, sys, os
+  except:
+    return 'failed to import git module'
+  dirname = os.path.dirname( sys.argv[0] )
+  try:
+    repo = git.Repo( dirname )
+  except:
+    return 'git: unmanaged'
+  commit = repo.commit()
+  return 'git %s #%s (%s) %s' % ( repo.working_dir, commit.hexsha[:7], commit.message.splitlines()[0], 'dirty' if repo.is_dirty() else 'clean' )
 
 def unreachable_items():
   # see http://stackoverflow.com/questions/16911559/trouble-understanding-pythons-gc-garbage-for-tracing-memory-leaks
@@ -92,6 +104,7 @@ def withrepr( f ):
     def __str__( self ):
       args = ','.join( '%s=%s' % item for item in self.items )
       return '%s(%s)' % ( f.__name__, args )
+    __repr__ = __str__
   return function_wrapper
 
 def profile( func ):
