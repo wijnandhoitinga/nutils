@@ -13,7 +13,7 @@ backends. At this point `matplotlib <http://matplotlib.org/>`_ and `vtk
 """
 
 from __future__ import print_function, division
-from . import numpy, log, core, cache, _
+from . import numpy, log, core, cache, _, debug
 import os, warnings, sys
 
 
@@ -463,7 +463,7 @@ class VTKFile( BasePlot ):
         write( 'DIMENSIONS {} {} {}\n'.format( *map( len, coords ) ) )
         for label, array in zip( 'XYZ', coords ):
           write( '{}_COORDINATES {} {}\n'.format( label, len(array), self._getvtkdtype( array ) ) )
-          self._writearray( array )
+          self._writearray( vtk, array )
       else:
         raise NotImplementedError
 
@@ -471,10 +471,11 @@ class VTKFile( BasePlot ):
       for location in 'points', 'cells':
         if not self._dataarrays[location]:
           continue
-        if location == 'points':
+        if location in 'points':
           write( 'POINT_DATA {}\n'.format( npoints ) )
         elif location == 'cells':
           write( 'CELL_DATA {}\n'.format( ncells ) )
+
         for name, vector, ncomponents, data in self._dataarrays[location]:
           vtkdtype = self._getvtkdtype( data )
           if vector:
@@ -483,7 +484,7 @@ class VTKFile( BasePlot ):
             write( 'SCALARS {} {} {}\n'.format( name, vtkdtype, ncomponents ) )
             write( 'LOOKUP_TABLE default\n' )
           self._writearray( vtk, data )
-
+        
   def rectilineargrid( self, coords ):
     """set rectilinear grid"""
     assert 1 <= len(coords) <= 3, 'Exptected a list of 1, 2 or 3 coordinate arrays, got {} instead'.format( len(coords) )
@@ -498,6 +499,7 @@ class VTKFile( BasePlot ):
     for i in range( ndims, 3 ):
       coords.append( numpy.array( [0], dtype=numpy.int32 ) )
     self._mesh = 'rectilinear', ndims, npoints, ncells, coords
+
 
   def unstructuredgrid( self, cellpoints, npars=None ):
     """set unstructured grid"""
@@ -528,6 +530,17 @@ class VTKFile( BasePlot ):
       j += np
 
     self._mesh = 'unstructured', ndims, npoints, ncells, points.ravel(), cells, celltypes
+
+  def gridvalues( self, name, data ):
+    'add grid valued data' #Not based on nutils topology
+    ndim = self._mesh[1]
+    vector=False if ndim==data.ndim else True
+    ncomponents=1 + (data.shape[-1]-1)*int(vector)
+    if vector:
+      data = numpy.array( [d.ravel() for d in data.T[:ndim]] )
+      if len(data)<3:
+        data = numpy.concatenate( (data, numpy.zeros( (3-len(data),data.shape[1]) ) ) )
+    self._dataarrays['points'].append( (name, vector, ncomponents, data.T) )
 
   def celldataarray( self, name, data, vector=None ):
     'add cell array'
@@ -566,32 +579,43 @@ class VTKFile( BasePlot ):
 
 ## AUXILIARY FUNCTIONS
 
-def writevtu( name, topo, coords, pointdata={}, celldata={}, ascii=False, superelements=False, maxrefine=3, ndigits=0, ischeme='gauss1', **kwargs ):
+def writevtu( name, topo, coords=None, pointdata={}, celldata={}, ascii=False, superelements=False, maxrefine=3, ndigits=0, ischeme='gauss1', **kwargs ):
   'write vtu from coords function'
 
-  from . import element, topology
+  if topo:
+    assert coords is not None, 'writevtu requires a geometry corresponding to the topology'
+    from . import element, topology
 
-  with VTKFile( name, ascii=ascii, ndigits=ndigits ) as vtkfile:
+    with VTKFile( name, ascii=ascii, ndigits=ndigits ) as vtkfile:
 
-    if not superelements:
-      topo = topo.simplex
-    else:
-      topo = topology.Topology( filter(None,[elem if not isinstance(elem,element.TrimmedElement) else elem.elem for elem in topo]) )
-
-    points = topo.elem_eval( coords, ischeme='vtk', separate=True )
-    vtkfile.unstructuredgrid( points, npars=topo.ndims )
-
-    if pointdata:  
+      if not superelements:
+        topo = topo.simplex
+      else:
+        topo = topology.Topology( filter(None,[elem if not isinstance(elem,element.TrimmedElement) else elem.elem for elem in topo]) )
+    
+      points = topo.elem_eval( coords, ischeme='vtk', separate=True )
+      vtkfile.unstructuredgrid( points, npars=topo.ndims )
+    
+      if pointdata:  
+        keys, values = zip( *pointdata.items() )
+        arrays = topo.elem_eval( values, ischeme='vtk', separate=False )
+        for key, array in zip( keys, arrays ):
+          vtkfile.pointdataarray( key, array )
+    
+      if celldata:  
+        keys, values = zip( *celldata.items() )
+        arrays = topo.elem_mean( values, coords=coords, ischeme=ischeme )
+        for key, array in zip( keys, arrays ):
+          vtkfile.celldataarray( key, array )
+  else:
+    assert isinstance( coords, list ), 'coords should be a list with gridpoints in each spatial direction'
+    with VTKFile( name, ascii=ascii, ndigits=ndigits ) as vtkfile:
+      vtkfile.rectilineargrid( coords )
       keys, values = zip( *pointdata.items() )
-      arrays = topo.elem_eval( values, ischeme='vtk', separate=False )
-      for key, array in zip( keys, arrays ):
-        vtkfile.pointdataarray( key, array )
-
-    if celldata:  
-      keys, values = zip( *celldata.items() )
-      arrays = topo.elem_mean( values, coords=coords, ischeme=ischeme )
-      for key, array in zip( keys, arrays ):
-        vtkfile.celldataarray( key, array )
+      for key, val in zip( keys, values ):
+        vtkfile.gridvalues( key, val )
+        
+    
 
 def _getnextindex( path, name, ext ):
   index = 0
