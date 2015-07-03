@@ -483,6 +483,7 @@ class VTKFile( BasePlot ):
           else:
             write( 'SCALARS {} {} {}\n'.format( name, vtkdtype, ncomponents ) )
             write( 'LOOKUP_TABLE default\n' )
+          debug.breakpoint()
           self._writearray( vtk, data )
         
   def rectilineargrid( self, coords ):
@@ -531,16 +532,18 @@ class VTKFile( BasePlot ):
 
     self._mesh = 'unstructured', ndims, npoints, ncells, points.ravel(), cells, celltypes
 
-  def gridvalues( self, name, data ):
-    'add grid valued data' #Not based on nutils topology
+  def gridvalues( self, pointdata ):
+    'add grid valued data'
     ndim = self._mesh[1]
-    vector=False if ndim==data.ndim else True
-    ncomponents=1 + (data.shape[-1]-1)*int(vector)
-    if vector:
-      data = numpy.array( [d.ravel() for d in data.T[:ndim]] )
-      if len(data)<3:
-        data = numpy.concatenate( (data, numpy.zeros( (3-len(data),data.shape[1]) ) ) )
-    self._dataarrays['points'].append( (name, vector, ncomponents, data.T) )
+    keys, values = zip( *pointdata.items() )
+    for name, data in zip( keys, values ):
+      vector=False if ndim==data.ndim else True
+      ncomponents=1 + (data.shape[-1]-1)*int(vector)
+      if vector:
+        data = numpy.array( [d.ravel() for d in data.T[:ndim]] )
+        if len(data)<3:
+          data = numpy.concatenate( (data, numpy.zeros( (3-len(data),data.shape[1]) ) ) )
+      self._dataarrays['points'].append( (name, vector, ncomponents, data.T.ravel()) )
 
   def celldataarray( self, name, data, vector=None ):
     'add cell array'
