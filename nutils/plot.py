@@ -464,6 +464,12 @@ class VTKFile( BasePlot ):
         for label, array in zip( 'XYZ', coords ):
           write( '{}_COORDINATES {} {}\n'.format( label, len(array), self._getvtkdtype( array ) ) )
           self._writearray( vtk, array )
+      elif self._mesh[0] == 'structured':
+        meshtype, ndims, npoints, dims, points = self._mesh
+        write( 'DATASET STRUCTURED_GRID\n' )
+        write( 'DIMENSIONS {} {} {}\n'.format( *dims ) )
+        write( 'POINTS {} {}\n'.format( npoints, self._getvtkdtype( points ) ) )
+        self._writearray( vtk, points )
       else:
         raise NotImplementedError
 
@@ -483,7 +489,6 @@ class VTKFile( BasePlot ):
           else:
             write( 'SCALARS {} {} {}\n'.format( name, vtkdtype, ncomponents ) )
             write( 'LOOKUP_TABLE default\n' )
-          debug.breakpoint()
           self._writearray( vtk, data )
         
   def rectilineargrid( self, coords ):
@@ -532,19 +537,20 @@ class VTKFile( BasePlot ):
 
     self._mesh = 'unstructured', ndims, npoints, ncells, points.ravel(), cells, celltypes
 
-  def gridvalues( self, pointdata ):
-    'add grid valued data'
-    ndim = self._mesh[1]
-    keys, values = zip( *pointdata.items() )
-    for name, data in zip( keys, values ):
-      vector=False if ndim==data.ndim else True
-      ncomponents=1 + (data.shape[-1]-1)*int(vector)
-      if vector:
-        data = numpy.array( [d.ravel() for d in data.T[:ndim]] )
-        if len(data)<3:
-          data = numpy.concatenate( (data, numpy.zeros( (3-len(data),data.shape[1]) ) ) )
-      self._dataarrays['points'].append( (name, vector, ncomponents, data.T.ravel()) )
-
+  def structuredgrid( self, vertices ):
+    ndims = len(vertices)
+    dims  = [len(v) for v in vertices]
+    if ndims<3:
+      vertices = vertices + [[0]]*(3-len(vertices))
+      dims = dims + [1]*(3-len(dims))
+    dims = tuple( dims )
+    assert len(vertices)==3
+    npoints = numpy.prod( dims )
+    y,z,x = numpy.meshgrid( vertices[1], vertices[2], vertices[0] )
+    points = numpy.array( [x.ravel(), y.ravel(), z.ravel()] ).T
+    assert len(points)==npoints, 'Number of points does not correspond with data'
+    self._mesh = 'structured', ndims, npoints, dims, points.ravel()
+    
   def celldataarray( self, name, data, vector=None ):
     'add cell array'
     self._adddataarray( name, data, 'cells', vector )
@@ -555,27 +561,41 @@ class VTKFile( BasePlot ):
 
   def _adddataarray( self, name, data, location, vector ):
     assert self._mesh is not None, 'Grid not specified'
-    ndims, npoints, ncells = self._mesh[1:4]
+    if self._mesh[0] == 'structured':
+      ndims, npoints, dims = self._mesh[1:4]
+      vector = len(data.shape)>ndims
+      ncomponents = data.shape[-1] if vector else 1
+      assert len(data.ravel())==npoints*ncomponents, 'Data does not match vertex points times vector dimension'
+      if ndims==2:
+        if vector:
+          data = numpy.concatenate( [data, numpy.zeros_like( data[...,:1], dtype=data.dtype ) ], axis=-1 )
+        data = data.transpose( 1,0,2 ) if vector else data.transpose( 1,0 )
+      else:
+        data = data.transpose( 2,1,0,3) if vector else data.transpose( 2,1,0 ) 
 
-    assert len(data) == ncells, 'data mismatch: expected length {}, got {}'.format( len(data), ncells )
 
-    if location == 'points':
-      data = numpy.concatenate( data, axis=0 )
-      assert npoints == data.shape[0], 'Point data array should have {} entries'.format(npoints)
-    elif location != 'cells':
-      raise Exception( 'invalid location: {}'.format( location ) )
-
-    assert data.ndim <= 2, 'data array should have at most 2 axes: {} and components (optional)'.format(location)
-
-    ncomponents = data.shape[1] if data.ndim == 2 else 1
-    if vector is None:
-      vector = data.ndim == 2
-
-    if vector:
-      assert ncomponents == ndims, 'data array should have {} components per entry'.format(ndims)
-      if ndims != 3:
-        data = numpy.concatenate( [data, numpy.zeros( [data.shape[0], 3-ndims], dtype=data.dtype ) ], axis=1 )
-      ncomponents = 3
+    else:
+      ndims, npoints, ncells = self._mesh[1:4]
+  
+      assert len(data) == ncells, 'data mismatch: expected length {}, got {}'.format( len(data), ncells )
+  
+      if location == 'points':
+        data = numpy.concatenate( data, axis=0 )
+        assert npoints == data.shape[0], 'Point data array should have {} entries'.format(npoints)
+      elif location != 'cells':
+        raise Exception( 'invalid location: {}'.format( location ) )
+  
+      assert data.ndim <= 2, 'data array should have at most 2 axes: {} and components (optional)'.format(location)
+  
+      ncomponents = data.shape[1] if data.ndim == 2 else 1
+      if vector is None:
+        vector = data.ndim == 2
+  
+      if vector:
+        assert ncomponents == ndims, 'data array should have {} components per entry'.format(ndims)
+        if ndims != 3:
+          data = numpy.concatenate( [data, numpy.zeros( [data.shape[0], 3-ndims], dtype=data.dtype ) ], axis=1 )
+        ncomponents = 3
 
     self._dataarrays[location].append(( name, vector, ncomponents, data.ravel() ))
 
