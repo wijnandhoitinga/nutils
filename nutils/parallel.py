@@ -31,7 +31,6 @@ def shzeros( shape, dtype=float ):
     return numpy.zeros( shape, dtype )
   fd, name = tempfile.mkstemp( dir=core.getprop( 'shmdir', default=None ) )
   try:
-    os.unlink(name)
     # Make sure the entire file is allocated by writing zeros.  If we omit
     # this, writing to the mmap array will cause the process to be killed with
     # SIGBUS if there is no memory available.
@@ -47,6 +46,7 @@ def shzeros( shape, dtype=float ):
     buf = mmap.mmap( fd, size )
   finally:
     os.close(fd)
+    os.unlink(name)
   array = numpy.frombuffer( buf, dtype ).reshape( shape )
   assert array.ravel()[0] == 0, '{!r} is not interpreted as 0 ({})'.format(b'\x00'*dtype.itemsize, dtype)
   return array

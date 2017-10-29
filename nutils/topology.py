@@ -605,8 +605,8 @@ class Topology( object ):
     bboxes = numpy.array([ numpy.mean(v,axis=0) * (1-scale) + numpy.array([ numpy.min(v,axis=0), numpy.max(v,axis=0) ]) * scale
       for v in vertices ]) # nelems x {min,max} x ndims
     vref = element.getsimplex(0)
-    ielems = parallel.shzeros(len(points), dtype=int)
-    xis = parallel.shzeros((len(points),len(geom)), dtype=float)
+    ielems = parallel.shzeros(len(points), dtype=int) if nprocs>1 else numpy.empty(len(points), dtype=int)
+    xis = parallel.shzeros((len(points),len(geom)), dtype=float) if nprocs>1 else numpy.empty((len(points),len(geom)), dtype=float)
     for ipoint, point in parallel.pariter(log.enumerate('point', points), nprocs=nprocs):
       ielemcandidates, = numpy.logical_and(numpy.greater_equal(point, bboxes[:,0,:]), numpy.less_equal(point, bboxes[:,1,:])).all(axis=-1).nonzero()
       for ielem in sorted( ielemcandidates, key=lambda i: numpy.linalg.norm(bboxes[i].mean(0)-point) ):
