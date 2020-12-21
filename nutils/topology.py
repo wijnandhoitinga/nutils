@@ -448,7 +448,7 @@ class Topology(types.Singleton):
     return self[selected]
 
   @log.withcontext
-  def locate(self, geom, coords, *, tol, eps=0, maxiter=100, arguments=None, weights=None, maxdist=None, ischeme=None, scale=None):
+  def locate(self, geom, coords, *, tol, eps=0, maxiter=100, arguments=None, weights=None, maxdist=None, ischeme=None, scale=None, centroids=None):
     '''Create a sample based on physical coordinates.
 
     In a finite element application, functions are commonly evaluated in points
@@ -508,7 +508,8 @@ class Topology(types.Singleton):
       coords = coords[...,_]
     if not geom.shape == coords.shape[1:] == (self.ndims,):
       raise Exception('invalid geometry or point shape for {}D topology'.format(self.ndims))
-    centroids = self.elem_mean(geom, geometry=geom, degree=2)
+    if centroids is None:
+      centroids = self.elem_mean(geom, geometry=geom, degree=2)
     ielems = parallel.shempty(len(coords), dtype=int)
     xis = parallel.shempty((len(coords),len(geom)), dtype=float)
     J = function.localgradient(geom, self.ndims)
